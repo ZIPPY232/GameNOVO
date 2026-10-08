@@ -82,7 +82,7 @@ export class UI {
     this.menu.innerHTML = '';
     this.menu.classList.add('on');
     const mm = h('div', 'mm');
-    mm.innerHTML = `<div class="title">Horizonte<br>Voxel<span>Sobrevivência · Exploração · Construção</span></div>`;
+    mm.innerHTML = `<div class="title">Horizonte<span>Sobrevivência · Exploração · Construção</span></div>`;
     const items = h('div', 'items');
     const btn = (label: string, fn: () => void, disabled = false, delay = 0) => {
       const b = h('button', 'item', label) as HTMLButtonElement;
@@ -171,10 +171,10 @@ export class UI {
 
   private creditsModal(): void {
     const body = h('div');
-    body.innerHTML = `<p><b>Horizonte Voxel</b> — protótipo jogável de sobrevivência espacial com terreno voxel em planetas esféricos.</p>
+    body.innerHTML = `<p><b>Horizonte</b> — protótipo jogável de sobrevivência e exploração espacial em planetas esféricos inteiros, com terreno escavável, vegetação e fauna procedurais.</p>
       <h3>Tecnologia</h3><p>TypeScript, Three.js (WebGL2), Vite, Web Workers, IndexedDB e Web Audio API. Tipografia: Rajdhani e JetBrains Mono (SIL OFL).</p>
       <h3>Conteúdo</h3><p>Todo o universo, terrenos, texturas, modelos, música e efeitos sonoros são gerados proceduralmente em tempo de execução — nenhum arquivo de mídia externo é utilizado.</p>
-      <h3>Direção</h3><p>Estilo interno “Voxel Realism”: geometria em blocos com materiais e luz fisicamente plausíveis.</p>`;
+      <h3>Direção</h3><p>Visual realista: terreno contínuo com materiais físicos, atmosfera com dispersão de luz, vegetação 3D e iluminação HDR.</p>`;
     this.modal('Créditos', body, [{ label: 'Fechar', fn: () => this.closeModal() }]);
   }
 

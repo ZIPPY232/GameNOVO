@@ -207,7 +207,7 @@ export class Pilot {
       if (this.supportTimer <= 0) {
         this.supportTimer = 0.25;
         let support = 0;
-        for (const lf of ShipModel.FEET) if (this.penetration(s.localToFrame(lf.clone().add(new THREE.Vector3(0, -0.3, 0)))) > 0) support++;
+        for (const lf of ShipModel.FEET) if (this.penetration(s.localToFrame(lf.clone().add(new THREE.Vector3(0, -0.6, 0)))) > 0) support++;
         if (support < 2) { s.landed = false; this.contactTimer = 0; }
       }
     }
@@ -345,17 +345,19 @@ export class Pilot {
     const up = this.env.up.lengthSq() > 0 ? this.env.up.clone() : s.upVec();
     const speed = s.vel.length();
     // hull probes
-    let maxPen = 0;
+    let maxPen = 0, belly = 0;
     for (const lp of ShipModel.HULL_PROBES) {
       const p = s.localToFrame(lp);
       const pen = this.penetration(p);
       if (pen > maxPen) maxPen = pen;
+      if (lp.y < -0.5 && pen > -0.08) belly++;
     }
-    let feetContact = 0, feetPen = 0;
+    let feetContact = 0, feetNear = 0, feetPen = 0;
     if (s.gearT > 0.9) {
       for (const lf of ShipModel.FEET) {
         const pen = this.penetration(s.localToFrame(lf));
         if (pen > -0.05) feetContact++;
+        if (pen > -0.6) feetNear++;
         feetPen = Math.max(feetPen, pen);
       }
     }
@@ -390,7 +392,9 @@ export class Pilot {
       s.vel.multiplyScalar(1 - Math.min(1, dt * 4));
     }
     // settle: all feet on ground and slow
-    if (feetContact >= 3 && s.vel.length() < 2.5 && this.env.gravity.lengthSq() > 0.01) {
+    // settle: two pads on the ground and the others close (gentle slopes are fine)
+    const resting = (feetContact >= 2 && feetNear >= 3) || (belly > 0 && feetContact + belly >= 2) || (belly > 0 && s.vel.length() < 0.6);
+    if (resting && s.vel.length() < 2.5 && this.env.gravity.lengthSq() > 0.01) {
       this.contactTimer += dt;
       // align to surface
       const sUp = s.upVec();

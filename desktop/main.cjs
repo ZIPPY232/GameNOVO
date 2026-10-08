@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 540,
     backgroundColor: '#000000',
-    title: 'Horizonte Voxel',
+    title: 'Horizonte',
     autoHideMenuBar: true,
     show: false,
     webPreferences: { backgroundThrottling: false, spellcheck: false },

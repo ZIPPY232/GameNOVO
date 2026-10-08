@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Rng, hash32 } from '../core/rng';
 import { properName } from '../universe/names';
 import type { Game } from './Game';
@@ -93,9 +92,9 @@ export class Fauna {
 
   private build(sp: Species): Creature {
     const root = new THREE.Group();
-    const body = new THREE.MeshStandardMaterial({ color: sp.color, roughness: 0.7 });
+    const body = new THREE.MeshStandardMaterial({ color: sp.color, roughness: 0.72 });
+    const dark = new THREE.MeshStandardMaterial({ color: sp.color.clone().multiplyScalar(0.45), roughness: 0.6 });
     const acc = new THREE.MeshStandardMaterial({ color: sp.accent.clone().multiplyScalar(0.3), emissive: sp.accent, emissiveIntensity: sp.glow });
-    const rb = (w: number, h: number, d: number) => new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.2);
     const add = (parent: THREE.Object3D, g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
       const o = new THREE.Mesh(g, m);
       o.position.set(x, y, z);
@@ -103,57 +102,101 @@ export class Fauna {
       parent.add(o);
       return o;
     };
+    const ellipsoid = (rx: number, ry: number, rz: number, seg = 18) => new THREE.SphereGeometry(1, seg, Math.round(seg * 0.7)).scale(rx, ry, rz);
+    /** tapered limb hanging down from its joint (length len) */
+    const limb = (r0: number, r1: number, len: number) => {
+      const prof: THREE.Vector2[] = [new THREE.Vector2(0.001, r0 * 0.9)];
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8;
+        prof.push(new THREE.Vector2(r0 + (r1 - r0) * t + Math.sin(t * Math.PI) * r0 * 0.15, -t * len));
+      }
+      prof.push(new THREE.Vector2(0.001, -len - r1 * 0.8));
+      return new THREE.LatheGeometry(prof.reverse(), 10);
+    };
     const legs: THREE.Object3D[] = [];
     let head: THREE.Object3D | null = null;
     const s = sp.scale;
     if (sp.arch === 'grazer') {
       const L = sp.legLen * s;
-      add(root, rb(0.7 * s, 0.6 * s, 1.3 * s), body, 0, L + 0.3 * s, 0);
-      add(root, rb(0.72 * s, 0.12 * s, 0.9 * s), acc, 0, L + 0.62 * s, -0.05 * s);
+      // barrel body with a darker dorsal ridge and soft belly
+      add(root, ellipsoid(0.38 * s, 0.34 * s, 0.7 * s), body, 0, L + 0.3 * s, 0);
+      add(root, ellipsoid(0.16 * s, 0.1 * s, 0.55 * s), dark, 0, L + 0.6 * s, -0.05 * s);
+      for (let i = 0; i < 4; i++) add(root, new THREE.SphereGeometry(0.035 * s, 8, 6), acc, 0, L + 0.66 * s, (0.3 - i * 0.2) * s);
+      // tail
+      const tail = add(root, limb(0.08 * s, 0.02 * s, 0.5 * s), body, 0, L + 0.4 * s, -0.66 * s);
+      tail.rotation.x = 1.0;
       const neck = new THREE.Group();
-      neck.position.set(0, L + 0.45 * s, 0.6 * s);
+      neck.position.set(0, L + 0.45 * s, 0.55 * s);
       root.add(neck);
-      add(neck, rb(0.22 * s, 0.22 * s, sp.neck * s + 0.2), body, 0, 0.05, (sp.neck * s) / 2);
+      const nlen = sp.neck * s + 0.15;
+      const nk = add(neck, limb(0.15 * s, 0.1 * s, nlen), body, 0, 0, 0);
+      nk.rotation.x = -2.0;
       head = new THREE.Group();
-      head.position.set(0, 0.1 * s, sp.neck * s + 0.15);
+      head.position.set(0, 0.42 * nlen + 0.04 * s, 0.91 * nlen);
       neck.add(head);
-      add(head, rb(0.4 * s, 0.35 * s, 0.45 * s), body, 0, 0, 0.1 * s);
-      add(head, rb(0.08 * s, 0.08 * s, 0.03), acc, 0.12 * s, 0.06 * s, 0.33 * s);
-      add(head, rb(0.08 * s, 0.08 * s, 0.03), acc, -0.12 * s, 0.06 * s, 0.33 * s);
-      for (const [x, z] of [[-0.25, 0.45], [0.25, 0.45], [-0.25, -0.45], [0.25, -0.45]]) {
+      add(head, ellipsoid(0.17 * s, 0.16 * s, 0.24 * s), body, 0, 0, 0.08 * s);
+      const snout = add(head, new THREE.ConeGeometry(0.12 * s, 0.26 * s, 14).rotateX(Math.PI / 2), body, 0, -0.04 * s, 0.32 * s);
+      snout.scale.set(1, 0.8, 1);
+      for (const x of [-1, 1]) {
+        add(head, new THREE.SphereGeometry(0.04 * s, 10, 8), acc, x * 0.11 * s, 0.06 * s, 0.2 * s);
+        const horn = add(head, new THREE.ConeGeometry(0.035 * s, 0.28 * s, 8), dark, x * 0.09 * s, 0.2 * s, -0.02 * s);
+        horn.rotation.set(-0.5, 0, x * -0.35);
+      }
+      for (const [x, z] of [[-0.24, 0.42], [0.24, 0.42], [-0.24, -0.42], [0.24, -0.42]]) {
         const leg = new THREE.Group();
-        leg.position.set(x * s, L, z * s);
+        leg.position.set(x * s, L + 0.08 * s, z * s);
         root.add(leg);
-        add(leg, rb(0.16 * s, L, 0.16 * s), body, 0, -L / 2, 0);
-        add(leg, rb(0.2 * s, 0.08 * s, 0.24 * s), acc, 0, -L + 0.04 * s, 0.03 * s);
+        add(leg, limb(0.1 * s, 0.05 * s, L), body, 0, 0, 0);
+        add(leg, new THREE.CylinderGeometry(0.055 * s, 0.075 * s, 0.07 * s, 10), dark, 0, -L + 0.0 * s, 0.01 * s);
         legs.push(leg);
       }
     } else if (sp.arch === 'floater') {
-      add(root, new THREE.SphereGeometry(0.6 * s, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), acc, 0, 0, 0);
-      add(root, new THREE.CylinderGeometry(0.6 * s, 0.5 * s, 0.1 * s, 16), body, 0, -0.02, 0);
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
+      // jellyfish-like drifter: translucent bell with a glowing core and trailing tentacles
+      const bellProf: THREE.Vector2[] = [];
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12;
+        const a = t * Math.PI * 0.55;
+        bellProf.push(new THREE.Vector2(Math.sin(a) * 0.62 * s * (1 + 0.06 * Math.sin(t * 20)), Math.cos(a) * 0.5 * s - 0.1 * s));
+      }
+      const bell = new THREE.LatheGeometry(bellProf.reverse(), 24);
+      const bellMat = new THREE.MeshStandardMaterial({ color: sp.color, roughness: 0.25, transparent: true, opacity: 0.55, emissive: sp.accent, emissiveIntensity: sp.glow * 0.25, side: THREE.DoubleSide, depthWrite: false });
+      const bm = add(root, bell, bellMat, 0, 0, 0);
+      bm.castShadow = false;
+      add(root, ellipsoid(0.22 * s, 0.18 * s, 0.22 * s), acc, 0, 0.05 * s, 0);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
         const t = new THREE.Group();
-        t.position.set(Math.cos(a) * 0.4 * s, -0.05, Math.sin(a) * 0.4 * s);
+        t.position.set(Math.cos(a) * 0.42 * s, -0.08 * s, Math.sin(a) * 0.42 * s);
         root.add(t);
-        add(t, rb(0.05 * s, 1.2 * s, 0.05 * s), acc, 0, -0.6 * s, 0);
+        const pts: THREE.Vector3[] = [];
+        for (let k = 0; k <= 6; k++) pts.push(new THREE.Vector3(Math.sin(k * 0.9 + i) * 0.08 * s, -k * 0.22 * s, Math.cos(k * 0.7 + i) * 0.06 * s));
+        add(t, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 0.025 * s, 6), acc, 0, 0, 0);
         legs.push(t);
       }
     } else {
+      // segmented crawler: armoured carapace, mandibles and jointed legs
       const L = 0.45 * s;
-      add(root, rb(0.8 * s, 0.35 * s, 1.1 * s), body, 0, L + 0.1 * s, 0);
-      for (let i = 0; i < 4; i++) add(root, rb(0.1 * s, 0.25 * s, 0.1 * s), acc, (i % 2 ? 0.2 : -0.2) * s, L + 0.35 * s, (i < 2 ? 0.2 : -0.2) * s);
+      for (let i = 0; i < 3; i++) {
+        const z = (0.35 - i * 0.38) * s;
+        add(root, ellipsoid(0.36 * s * (1 - i * 0.08), 0.2 * s, 0.24 * s), body, 0, L + 0.12 * s, z);
+        add(root, ellipsoid(0.33 * s * (1 - i * 0.08), 0.1 * s, 0.22 * s), dark, 0, L + 0.25 * s, z);
+      }
+      for (let i = 0; i < 4; i++) add(root, new THREE.ConeGeometry(0.05 * s, 0.22 * s, 8), acc, (i % 2 ? 0.16 : -0.16) * s, L + 0.38 * s, (i < 2 ? 0.25 : -0.12) * s);
       head = new THREE.Group();
-      head.position.set(0, L + 0.15 * s, 0.6 * s);
+      head.position.set(0, L + 0.12 * s, 0.62 * s);
       root.add(head);
-      add(head, rb(0.5 * s, 0.25 * s, 0.35 * s), body, 0, 0, 0);
-      add(head, rb(0.35 * s, 0.06 * s, 0.05), acc, 0, 0.05 * s, 0.18 * s);
+      add(head, ellipsoid(0.24 * s, 0.14 * s, 0.18 * s), body, 0, 0, 0);
+      add(head, ellipsoid(0.2 * s, 0.04 * s, 0.04 * s), acc, 0, 0.06 * s, 0.13 * s);
+      for (const x of [-1, 1]) {
+        const m = add(head, new THREE.ConeGeometry(0.03 * s, 0.22 * s, 8), dark, x * 0.1 * s, -0.05 * s, 0.2 * s);
+        m.rotation.set(Math.PI / 2, 0, x * 0.5);
+      }
       for (const z of [0.35, 0, -0.35]) for (const x of [-1, 1]) {
         const leg = new THREE.Group();
-        leg.position.set(x * 0.4 * s, L + 0.1 * s, z * s);
+        leg.position.set(x * 0.36 * s, L + 0.12 * s, z * s);
         leg.rotation.z = x * 0.6;
         root.add(leg);
-        add(leg, rb(0.08 * s, L * 1.4, 0.08 * s), body, 0, -L * 0.7, 0);
+        add(leg, limb(0.05 * s, 0.03 * s, L * 1.4), dark, 0, 0, 0);
         legs.push(leg);
       }
     }

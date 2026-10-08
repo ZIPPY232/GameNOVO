@@ -218,13 +218,15 @@ function shade(m: LayerMaterial, n: TileNoise2, u: number, v: number, o: Texel, 
       break;
     }
     case 'ice': {
-      const f = n.fbm(u, v, 3, 4);
-      const [f1, f2] = n.worley(u, v, 4);
-      const crack = 1 - smooth(0.0, 0.025, f2 - f1);
-      const bubbles = smooth(0.7, 0.9, n.fbm(u, v, 24, 2) * 0.5 + 0.5);
-      setMix(clamp01(crack * 0.8 + bubbles * 0.4 + f * 0.2));
-      h = f * 0.2 - crack * 0.3;
-      rough = m.roughness + crack * 0.3;
+      // clear ice with frost haze, trapped bubbles and a few hairline fractures
+      const f = n.fbm(u, v, 3, 5);
+      const frost = smooth(0.1, 0.7, n.fbm(u, v, 9, 4) * 0.5 + 0.5);
+      const [f1, f2] = n.worley(u + n.fbm(u, v, 4, 2) * 0.05, v, 2);
+      const crack = (1 - smooth(0.0, 0.008, f2 - f1)) * smooth(0.45, 0.7, n.fbm(u, v, 3, 2) * 0.5 + 0.5);
+      const bubbles = smooth(0.78, 0.92, n.fbm(u, v, 32, 2) * 0.5 + 0.5);
+      setMix(clamp01(frost * 0.5 + crack * 0.6 + bubbles * 0.3 + f * 0.15));
+      h = f * 0.25 + frost * 0.1 - crack * 0.2;
+      rough = m.roughness + frost * 0.35 + crack * 0.2;
       break;
     }
     case 'ore': {

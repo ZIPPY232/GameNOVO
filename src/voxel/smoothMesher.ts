@@ -152,12 +152,13 @@ export function meshSmooth(inp: SmoothInput): SmoothBuffers | null {
     let nz = -(gX * dx[2] + gY * dy[2] + gZ * dz[2]);
     const nl = Math.hypot(nx, ny, nz) || 1;
     nx /= nl; ny /= nl; nz /= nl;
-    // material: the most solid natural corner
-    let best = -1, bestV = -1;
+    // material: the solid natural corner closest to the surface (the exposed layer,
+    // not whatever lies beneath it)
+    let best = -1, bestV = 2;
     for (let c = 0; c < 8; c++) {
       const b = vox[ci[c]];
-      if (b === B.AIR || STRUCTURE[b] || b === B.UNKNOWN) continue;
-      if (cv[c] > bestV) { bestV = cv[c]; best = b; }
+      if (b === B.AIR || STRUCTURE[b] || b === B.UNKNOWN || cv[c] < 0.5) continue;
+      if (cv[c] < bestV) { bestV = cv[c]; best = b; }
     }
     if (best < 0) best = B.ROCK;
     // ambient occlusion: mean field on a shell around the vertex (flat ground = 0.5,

@@ -12,7 +12,7 @@
     "desktop:win": "npm run build:standalone && npm --prefix desktop run pack -- win32 x64",
     "desktop:linux": "npm run build:standalone && npm --prefix desktop run pack -- linux x64",
     "desktop:mac": "npm run build:standalone && npm --prefix desktop run pack -- darwin arm64",
-    "launcher:win": "npm run build:standalone && cp dist-standalone/index.html desktop/launcher/game.html && cd desktop/launcher && GOOS=windows GOARCH=amd64 go build -trimpath -ldflags \"-H=windowsgui -s -w\" -o ../../release/HorizonteVoxel.exe ."
+    "launcher:win": "npm run build:standalone && cp dist-standalone/index.html desktop/launcher/game.html && cd desktop/launcher && GOOS=windows GOARCH=amd64 go build -trimpath -ldflags \"-H=windowsgui -s -w\" -o ../../release/Horizonte.exe ."
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.3.0",

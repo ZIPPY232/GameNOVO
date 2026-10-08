@@ -226,7 +226,7 @@ export class VoxelWorld {
    * searching down to zStart - maxDown. Returns -Infinity if none.
    */
   surfaceBelow(face: number, x: number, y: number, zStart: number, maxDown: number): number {
-    const step = 0.5;
+    const step = Math.min(0.5, Math.max(0.05, maxDown / 2));
     let zPrev = zStart;
     let fPrev = this.sample(face, x, y, zPrev);
     if (fPrev >= 0.5) {
@@ -237,11 +237,12 @@ export class VoxelWorld {
       }
       return zStart + maxDown;
     }
-    for (let z = zStart - step; z >= zStart - maxDown; z -= step) {
+    for (let z = zStart - step; z >= zStart - maxDown - 1e-6; z -= step) {
       const f = this.sample(face, x, y, z);
       if (f >= 0.5) return this.refine(face, x, y, z, zPrev);
       zPrev = z; fPrev = f;
     }
+    void fPrev;
     return -Infinity;
   }
 
