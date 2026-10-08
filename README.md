@@ -19,11 +19,14 @@ npm run preview  # serve o build de produção
 npm run build:standalone   # dist-standalone/index.html: um único arquivo, abre com duplo clique
 npm run desktop:win        # executável Windows em desktop/out/ (Electron)
 npm run desktop:linux      # idem para Linux · desktop:mac para macOS (Apple Silicon)
+npm run launcher:win       # release/HorizonteVoxel.exe: launcher leve (Go) com o jogo embutido
 ```
 
 Os comandos `desktop:*` exigem antes `npm install --prefix desktop`. O build standalone
 embute scripts, estilos, fontes e o worker de geração num só HTML, por isso funciona
 também a partir de `file://`. No app desktop: F11 ou Alt+Enter alterna tela cheia.
+O launcher (`desktop/launcher`, requer Go) extrai o jogo para `%LOCALAPPDATA%\HorizonteVoxel`
+e o abre numa janela de aplicativo do Edge/Chrome, sem barras do navegador.
 
 Requer um navegador com WebGL2 (Chrome/Edge/Firefox recentes). Uma GPU dedicada é
 recomendada para os presets Alto/Ultra/Cinematográfico.
