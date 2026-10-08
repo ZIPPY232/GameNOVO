@@ -1,0 +1,339 @@
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { Rng, hash32 } from '../core/rng';
+import { properName } from '../universe/names';
+import type { Game } from './Game';
+
+/**
+ * Procedural alien fauna. Species are derived from the planet seed by
+ * combining anatomical archetypes with bounded parameters, so creatures stay
+ * coherent while differing between worlds. Simple behaviours: wander, graze,
+ * flee, drift, hunt (hostiles) and rest at night.
+ */
+
+type Archetype = 'grazer' | 'floater' | 'crawler';
+
+interface Species {
+  id: string;
+  name: string;
+  arch: Archetype;
+  color: THREE.Color;
+  accent: THREE.Color;
+  scale: number;
+  legLen: number;
+  neck: number;
+  speed: number;
+  hostile: boolean;
+  glow: number;
+  pitch: number;
+}
+
+interface Creature {
+  sp: Species;
+  root: THREE.Group;
+  legs: THREE.Object3D[];
+  head: THREE.Object3D | null;
+  pos: THREE.Vector3;
+  heading: THREE.Vector3;
+  state: 'wander' | 'graze' | 'flee' | 'hunt' | 'rest';
+  timer: number;
+  phase: number;
+  health: number;
+  attackT: number;
+  hover: number;
+  hurtT: number;
+}
+
+const ARCH_LABEL: Record<Archetype, string> = { grazer: 'herbívoro quadrúpede', floater: 'flutuador bioluminescente', crawler: 'predador hexápode' };
+
+export class Fauna {
+  readonly game: Game;
+  readonly group = new THREE.Group();
+  private creatures: Creature[] = [];
+  private species: Species[] = [];
+  private bodyKey = '';
+  private spawnT = 0;
+  threat = 0;
+  private seen = new Set<string>();
+
+  constructor(game: Game) {
+    this.game = game;
+  }
+
+  private speciesFor(key: string, seed: number, type: string, hasFlora: boolean): Species[] {
+    if (!hasFlora) return [];
+    const rng = new Rng(hash32(seed, 777));
+    const out: Species[] = [];
+    const hue = rng.next();
+    const mk = (arch: Archetype, i: number): Species => {
+      const r = rng.fork(i);
+      const c = new THREE.Color().setHSL((hue + r.range(-0.15, 0.15) + 1) % 1, r.range(0.25, 0.6), r.range(0.25, 0.5));
+      const a = new THREE.Color().setHSL((hue + 0.5 + r.range(-0.1, 0.1)) % 1, 0.8, 0.6);
+      return {
+        id: `${key}/${arch}${i}`,
+        name: properName(r),
+        arch,
+        color: c,
+        accent: a,
+        scale: arch === 'grazer' ? r.range(0.8, 1.6) : arch === 'floater' ? r.range(0.6, 1.3) : r.range(0.6, 1.0),
+        legLen: r.range(0.5, 1.1),
+        neck: r.range(0.2, 0.7),
+        speed: arch === 'crawler' ? r.range(3.5, 5) : arch === 'grazer' ? r.range(1.6, 2.6) : r.range(0.6, 1.2),
+        hostile: arch === 'crawler',
+        glow: arch === 'floater' ? r.range(2, 6) : r.range(0, 1.5),
+        pitch: r.range(0.7, 1.4),
+      };
+    };
+    out.push(mk('grazer', 0));
+    if (rng.chance(0.6)) out.push(mk('grazer', 1));
+    out.push(mk('floater', 2));
+    if (type === 'exotic' || type === 'volcanic' || rng.chance(0.35)) out.push(mk('crawler', 3));
+    return out;
+  }
+
+  private build(sp: Species): Creature {
+    const root = new THREE.Group();
+    const body = new THREE.MeshStandardMaterial({ color: sp.color, roughness: 0.7 });
+    const acc = new THREE.MeshStandardMaterial({ color: sp.accent.clone().multiplyScalar(0.3), emissive: sp.accent, emissiveIntensity: sp.glow });
+    const rb = (w: number, h: number, d: number) => new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.2);
+    const add = (parent: THREE.Object3D, g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
+      const o = new THREE.Mesh(g, m);
+      o.position.set(x, y, z);
+      o.castShadow = true;
+      parent.add(o);
+      return o;
+    };
+    const legs: THREE.Object3D[] = [];
+    let head: THREE.Object3D | null = null;
+    const s = sp.scale;
+    if (sp.arch === 'grazer') {
+      const L = sp.legLen * s;
+      add(root, rb(0.7 * s, 0.6 * s, 1.3 * s), body, 0, L + 0.3 * s, 0);
+      add(root, rb(0.72 * s, 0.12 * s, 0.9 * s), acc, 0, L + 0.62 * s, -0.05 * s);
+      const neck = new THREE.Group();
+      neck.position.set(0, L + 0.45 * s, 0.6 * s);
+      root.add(neck);
+      add(neck, rb(0.22 * s, 0.22 * s, sp.neck * s + 0.2), body, 0, 0.05, (sp.neck * s) / 2);
+      head = new THREE.Group();
+      head.position.set(0, 0.1 * s, sp.neck * s + 0.15);
+      neck.add(head);
+      add(head, rb(0.4 * s, 0.35 * s, 0.45 * s), body, 0, 0, 0.1 * s);
+      add(head, rb(0.08 * s, 0.08 * s, 0.03), acc, 0.12 * s, 0.06 * s, 0.33 * s);
+      add(head, rb(0.08 * s, 0.08 * s, 0.03), acc, -0.12 * s, 0.06 * s, 0.33 * s);
+      for (const [x, z] of [[-0.25, 0.45], [0.25, 0.45], [-0.25, -0.45], [0.25, -0.45]]) {
+        const leg = new THREE.Group();
+        leg.position.set(x * s, L, z * s);
+        root.add(leg);
+        add(leg, rb(0.16 * s, L, 0.16 * s), body, 0, -L / 2, 0);
+        add(leg, rb(0.2 * s, 0.08 * s, 0.24 * s), acc, 0, -L + 0.04 * s, 0.03 * s);
+        legs.push(leg);
+      }
+    } else if (sp.arch === 'floater') {
+      add(root, new THREE.SphereGeometry(0.6 * s, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), acc, 0, 0, 0);
+      add(root, new THREE.CylinderGeometry(0.6 * s, 0.5 * s, 0.1 * s, 16), body, 0, -0.02, 0);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const t = new THREE.Group();
+        t.position.set(Math.cos(a) * 0.4 * s, -0.05, Math.sin(a) * 0.4 * s);
+        root.add(t);
+        add(t, rb(0.05 * s, 1.2 * s, 0.05 * s), acc, 0, -0.6 * s, 0);
+        legs.push(t);
+      }
+    } else {
+      const L = 0.45 * s;
+      add(root, rb(0.8 * s, 0.35 * s, 1.1 * s), body, 0, L + 0.1 * s, 0);
+      for (let i = 0; i < 4; i++) add(root, rb(0.1 * s, 0.25 * s, 0.1 * s), acc, (i % 2 ? 0.2 : -0.2) * s, L + 0.35 * s, (i < 2 ? 0.2 : -0.2) * s);
+      head = new THREE.Group();
+      head.position.set(0, L + 0.15 * s, 0.6 * s);
+      root.add(head);
+      add(head, rb(0.5 * s, 0.25 * s, 0.35 * s), body, 0, 0, 0);
+      add(head, rb(0.35 * s, 0.06 * s, 0.05), acc, 0, 0.05 * s, 0.18 * s);
+      for (const z of [0.35, 0, -0.35]) for (const x of [-1, 1]) {
+        const leg = new THREE.Group();
+        leg.position.set(x * 0.4 * s, L + 0.1 * s, z * s);
+        leg.rotation.z = x * 0.6;
+        root.add(leg);
+        add(leg, rb(0.08 * s, L * 1.4, 0.08 * s), body, 0, -L * 0.7, 0);
+        legs.push(leg);
+      }
+    }
+    return {
+      sp, root, legs, head, pos: new THREE.Vector3(), heading: new THREE.Vector3(1, 0, 0), state: 'wander', timer: 2, phase: Math.random() * 10,
+      health: sp.arch === 'crawler' ? 40 : 25, attackT: 0, hover: sp.arch === 'floater' ? 3 + Math.random() * 4 : 0, hurtT: 0,
+    };
+  }
+
+  private clear(): void {
+    for (const c of this.creatures) c.root.removeFromParent();
+    this.creatures = [];
+  }
+
+  update(dt: number): void {
+    const g = this.game;
+    const u = g.universe;
+    const f = u.focus;
+    const phys = f?.physics;
+    this.threat = Math.max(0, this.threat - dt);
+    if (!f || !phys || f.body !== u.frame || g.mode === 'warp') {
+      if (this.creatures.length) this.clear();
+      return;
+    }
+    if (this.bodyKey !== f.key) {
+      this.clear();
+      this.bodyKey = f.key;
+      const def = f.body.def;
+      this.species = this.speciesFor(f.key, def.gen!.seed, def.type, def.gen!.flora !== 'none' && !!def.atmosphere);
+      f.root.add(this.group);
+    }
+    if (!this.species.length) return;
+    const quality = g.settings.graphics.objectDensity;
+    const maxN = Math.round(9 * quality);
+    const p = g.mode === 'ship' ? g.pilot.ship.pos : g.player.pos;
+    const night = u.sunElevation < -0.05;
+    // spawn
+    this.spawnT -= dt;
+    if (this.spawnT <= 0 && this.creatures.length < maxN) {
+      this.spawnT = 1.2;
+      const sp = this.species[Math.floor(Math.random() * this.species.length)];
+      if (sp.hostile && !night && Math.random() < 0.7) return;
+      const up = p.clone().normalize();
+      const t1 = new THREE.Vector3(0, 1, 0).cross(up);
+      if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0);
+      t1.normalize();
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 35 + Math.random() * 35;
+      const dir = up.clone().multiplyScalar(p.length()).add(t1.applyAxisAngle(up, ang).multiplyScalar(dist)).normalize();
+      const ground = this.groundRadius(dir, p.length() + 40);
+      if (ground > 0) {
+        const genP = f.body.def.gen!;
+        if (genP.hasOcean && ground < genP.baseRadius + genP.seaZ + 0.5) return;
+        const c = this.build(sp);
+        c.pos.copy(dir).multiplyScalar(ground);
+        c.heading.copy(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).projectOnPlane(dir).normalize());
+        this.group.add(c.root);
+        this.creatures.push(c);
+      }
+    }
+    // simulate
+    for (const c of this.creatures) this.step(c, dt, p, night);
+    // despawn
+    this.creatures = this.creatures.filter((c) => {
+      const far = c.pos.distanceTo(p) > 120;
+      if (far || c.health <= 0) {
+        if (c.health <= 0) {
+          g.effects.burstDebris(c.pos.clone().addScaledVector(c.pos.clone().normalize(), 0.6), c.pos.clone().normalize(), c.sp.color, 8);
+          g.inventory.add('organics', 2);
+          g.toast('+2 Compostos Orgânicos');
+        }
+        c.root.removeFromParent();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private groundRadius(dir: THREE.Vector3, fromR: number): number {
+    const phys = this.game.universe.focus!.physics!;
+    const gp = { face: 0, x: 0, y: 0, z: 0 };
+    phys.toGrid(dir.clone().multiplyScalar(fromR), gp);
+    const I = Math.floor(gp.x), J = Math.floor(gp.y);
+    const top = phys.world.getLoaded(gp.face, I, J, Math.floor(gp.z));
+    if (top === 255) return -1;
+    for (let k = Math.floor(gp.z); k > Math.floor(gp.z) - 70; k--) {
+      if (phys.solid(gp.face, I, J, k)) return phys.world.params.baseRadius + k + 1;
+    }
+    return -1;
+  }
+
+  private step(c: Creature, dt: number, player: THREE.Vector3, night: boolean): void {
+    const g = this.game;
+    const up = c.pos.clone().normalize();
+    const toP = player.clone().sub(c.pos);
+    const dist = toP.length();
+    c.timer -= dt;
+    c.hurtT = Math.max(0, c.hurtT - dt);
+    // discovery
+    if (dist < 14 && !this.seen.has(c.sp.id)) {
+      this.seen.add(c.sp.id);
+      g.discover({ id: c.sp.id, kind: 'species', title: `Espécie: ${c.sp.name}`, text: `${ARCH_LABEL[c.sp.arch]} — ${c.sp.hostile ? 'agressivo; mantenha distância ou use o extrator para repeli-lo' : 'pacífico'}.`, time: Date.now(), systemId: g.universe.def.id });
+      g.audio.creature(c.sp.pitch, c.sp.hostile);
+    }
+    // behaviour
+    let speed = 0;
+    if (c.sp.hostile) {
+      if (dist < 22 && g.mode === 'onfoot' && (night || c.hurtT > 0 || dist < 8)) c.state = 'hunt';
+      else if (c.state === 'hunt' && dist > 30) c.state = 'wander';
+    } else if (c.sp.arch === 'grazer' && dist < 8 && g.mode === 'onfoot') {
+      c.state = 'flee';
+      c.timer = 3;
+    }
+    if (c.timer <= 0 && c.state !== 'hunt') {
+      const r = Math.random();
+      c.state = night && c.sp.arch === 'grazer' ? 'rest' : r < 0.4 ? 'graze' : 'wander';
+      c.timer = 3 + Math.random() * 6;
+      if (c.state === 'wander') c.heading.applyAxisAngle(up, (Math.random() - 0.5) * 2.5);
+      if (Math.random() < 0.15 && dist < 40) g.audio.creature(c.sp.pitch, c.sp.hostile);
+    }
+    switch (c.state) {
+      case 'wander': speed = c.sp.speed * 0.5; break;
+      case 'flee': c.heading.copy(toP).negate().projectOnPlane(up).normalize(); speed = c.sp.speed * 2.2; break;
+      case 'hunt': {
+        c.heading.copy(toP).projectOnPlane(up).normalize();
+        speed = dist > 1.6 ? c.sp.speed : 0;
+        c.attackT -= dt;
+        this.threat = 2;
+        if (dist < 2 && c.attackT <= 0) {
+          c.attackT = 1.3;
+          g.vitals.damage(9, 'creature');
+          g.vitals.integrity = Math.max(0, g.vitals.integrity - 4);
+          g.audio.creature(c.sp.pitch * 0.8, true);
+        }
+        break;
+      }
+      default: speed = 0;
+    }
+    c.heading.projectOnPlane(up).normalize();
+    c.pos.addScaledVector(c.heading, speed * dt);
+    // follow ground
+    const gr = this.groundRadius(up, c.pos.length() + 3);
+    if (gr > 0) {
+      const target = gr + c.hover;
+      const r = c.pos.length();
+      c.pos.setLength(r + (target - r) * Math.min(1, dt * (c.sp.arch === 'floater' ? 1 : 10)));
+    }
+    if (c.sp.arch === 'floater') c.pos.addScaledVector(up, Math.sin(g.universe.time * 0.8 + c.phase) * 0.15 * dt);
+    // pose
+    c.phase += speed * dt * 3;
+    const R = new THREE.Vector3().crossVectors(up, c.heading).normalize();
+    c.root.position.copy(c.pos);
+    c.root.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(R.clone().negate().negate(), up, c.heading).premultiply(new THREE.Matrix4()));
+    c.root.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(R, up, c.heading));
+    c.legs.forEach((l, i) => {
+      if (c.sp.arch === 'floater') l.rotation.x = Math.sin(g.universe.time * 1.5 + i) * 0.25;
+      else l.rotation.x = Math.sin(c.phase + (i % 2 ? Math.PI : 0) + (i >= 2 ? Math.PI / 2 : 0)) * 0.6 * Math.min(1, speed);
+    });
+    if (c.head) c.head.rotation.x = c.state === 'graze' ? 0.9 : c.state === 'rest' ? 0.5 : Math.sin(g.universe.time + c.phase) * 0.1;
+    c.root.scale.setScalar(c.hurtT > 0 ? 1 + Math.sin(c.hurtT * 40) * 0.04 : 1);
+  }
+
+  /** Ray test against creatures (planet-local ray). */
+  raycast(origin: THREE.Vector3, dir: THREE.Vector3, max: number): { c: Creature; dist: number } | null {
+    let best: { c: Creature; dist: number } | null = null;
+    for (const c of this.creatures) {
+      const center = c.pos.clone().addScaledVector(c.pos.clone().normalize(), c.hover > 0 ? 0 : 0.7 * c.sp.scale);
+      const oc = center.clone().sub(origin);
+      const t = oc.dot(dir);
+      if (t < 0 || t > max) continue;
+      const d2 = oc.lengthSq() - t * t;
+      const rad = 0.8 * c.sp.scale;
+      if (d2 < rad * rad && (!best || t < best.dist)) best = { c, dist: t };
+    }
+    return best;
+  }
+
+  hurt(c: Creature, amount: number): void {
+    c.health -= amount;
+    c.hurtT = 0.4;
+    if (!c.sp.hostile) { c.state = 'flee'; c.timer = 4; }
+  }
+}
