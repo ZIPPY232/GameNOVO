@@ -82,4 +82,36 @@ src/
 
 ## Estado atual
 
-Ver a seção de progresso no final deste arquivo e o histórico de commits.
+Vertical slice jogável cobrindo as fases 1–5 do plano, com polimento visual em andamento.
+
+| Fase | Conteúdo | Estado |
+| --- | --- | --- |
+| 1 | Pipeline HDR, planeta cube-sphere com LOD, chunks editáveis, astronauta, câmeras 1ª/3ª pessoa | ✅ |
+| 2 | Sobrevivência (O₂, energia, temperatura, integridade, radiação, fome/sede no modo completo), mineração, inventário, fabricação, módulos de base com energia e pressurização | ✅ |
+| 3 | Nave pilotável: reparo, decolagem, voo atmosférico, órbita, pouso, aquecimento de reentrada | ✅ |
+| 4 | Sistema estelar completo: viagem interplanetária em cruzeiro, troca de referencial por esfera de influência, estação orbital com acoplamento, cinturão de asteroides | ✅ |
+| 5 | Galáxia procedural por setores, salto interestelar, chegada em sistemas novos | ✅ |
+| 6 | Polimento de realismo, desempenho e conteúdo | 🔄 em andamento |
+
+Também implementados: menu principal cinematográfico em 3D, campanha inicial guiada
+(acordar → escanear → coletar → fabricar → reparar → energia → propulsor → embarcar →
+órbita → identificar → viajar → salto), clima dinâmico (chuva, tempestade, neve,
+nevasca, tempestade de areia), ciclo dia/noite com eclipses, fauna e flora procedurais por
+planeta, pontos de interesse (postos, destroços, monólitos) com saque e registros,
+scanner, diário de descobertas, renomeação de corpos, personalização do traje, áudio e
+música procedurais adaptativos, salvamento versionado e configurações gráficas com presets
+(Baixo, Médio, Alto, Ultra, Cinematográfico) e controles individuais.
+
+### Testes
+
+Os fluxos principais são verificados com scripts Playwright (Chromium/SwiftShader):
+novo jogo, caminhada, mineração, fabricação, reparo, decolagem, órbita, viagem e pouso em
+outra lua, pressurização de habitat, salto interestelar, salvar → recarregar → continuar,
+todas as abas do terminal, visita a cada tipo de planeta e fauna. Em CPU, um passo de
+simulação custa ~1 ms; a cena típica na superfície fica em ~1 M triângulos / ~400 draw calls.
+
+### Próximos passos
+
+- Mais variedade de biomas, estruturas e espécies; árvore tecnológica mais longa.
+- Otimizações de GPU para os presets altos (oclusão de chunks, instancing de flora).
+- Anéis e luas com superfícies pousáveis em sistemas gerados; mais tipos de estação.
