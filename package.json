@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:standalone": "tsc --noEmit && vite build --config vite.standalone.config.ts",
+    "desktop:win": "npm run build:standalone && npm --prefix desktop run pack -- win32 x64",
+    "desktop:linux": "npm run build:standalone && npm --prefix desktop run pack -- linux x64",
+    "desktop:mac": "npm run build:standalone && npm --prefix desktop run pack -- darwin arm64"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.3.0",
@@ -17,6 +21,7 @@
   "devDependencies": {
     "@types/three": "^0.186.0",
     "typescript": "^7.0.2",
-    "vite": "^7.3.7"
+    "vite": "^7.3.7",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }

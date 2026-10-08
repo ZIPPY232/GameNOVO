@@ -13,6 +13,18 @@ npm run build    # typecheck + build de produção em dist/
 npm run preview  # serve o build de produção
 ```
 
+### Versões para jogar sem servidor
+
+```bash
+npm run build:standalone   # dist-standalone/index.html: um único arquivo, abre com duplo clique
+npm run desktop:win        # executável Windows em desktop/out/ (Electron)
+npm run desktop:linux      # idem para Linux · desktop:mac para macOS (Apple Silicon)
+```
+
+Os comandos `desktop:*` exigem antes `npm install --prefix desktop`. O build standalone
+embute scripts, estilos, fontes e o worker de geração num só HTML, por isso funciona
+também a partir de `file://`. No app desktop: F11 ou Alt+Enter alterna tela cheia.
+
 Requer um navegador com WebGL2 (Chrome/Edge/Firefox recentes). Uma GPU dedicada é
 recomendada para os presets Alto/Ultra/Cinematográfico.
 

@@ -1,0 +1,16 @@
+{
+  "name": "horizonte-voxel",
+  "productName": "Horizonte Voxel",
+  "version": "0.6.0",
+  "description": "Jogo de sobrevivência espacial voxel",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "node pack.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.7.0"
+  }
+}

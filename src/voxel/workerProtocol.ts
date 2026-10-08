@@ -2,6 +2,8 @@ import type { MeshResult } from './mesher';
 import type { TileResult, BakeResult } from '../planet/tilegen';
 import type { TextureSet } from '../render/textureGen';
 import type { PlanetGenParams } from '../universe/types';
+// inlined as a blob so the game also runs from file:// (standalone build / desktop app)
+import TerrainWorker from './terrain.worker.ts?worker&inline';
 
 export type WorkerRequest =
   | { type: 'init'; id: number; bodyId: string; params: PlanetGenParams }
@@ -57,7 +59,7 @@ export class WorkerPool {
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
     this.size = count ?? Math.max(2, Math.min(6, hc - 1));
     for (let i = 0; i < this.size; i++) {
-      const w = new Worker(new URL('./terrain.worker.ts', import.meta.url), { type: 'module' });
+      const w = new TerrainWorker();
       w.onmessage = (ev: MessageEvent<WorkerResponse>) => this.onMessage(i, ev.data);
       w.onerror = (ev) => console.error('worker error', ev.message);
       this.workers.push(w);
