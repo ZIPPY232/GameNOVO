@@ -239,15 +239,11 @@ export class Fauna {
     phys.toGrid(dir.clone().multiplyScalar(fromR), gp);
     const I = Math.floor(gp.x), J = Math.floor(gp.y);
     // start just above the natural surface (covers flora), scan down through loaded data
-    const natural = w.gen.surfaceTop(gp.face, I, J);
-    const start = Math.min(Math.floor(gp.z), natural + 14);
-    if (w.getLoaded(gp.face, I, J, natural) === 255) return -1;
-    for (let k = start; k > start - 60; k--) {
-      const b = w.getLoaded(gp.face, I, J, k);
-      if (b === 255) continue;
-      if (phys.solid(gp.face, I, J, k)) return w.params.baseRadius + k + 1;
-    }
-    return -1;
+    const natural = w.gen.groundZ(gp.face, gp.x, gp.y);
+    if (w.getLoaded(gp.face, I, J, Math.floor(natural)) === 255) return -1;
+    const start = Math.min(gp.z, natural + 3);
+    const z = w.surfaceBelow(gp.face, gp.x, gp.y, start, 60);
+    return z === -Infinity ? -1 : w.params.baseRadius + z;
   }
 
   private step(c: Creature, dt: number, player: THREE.Vector3, night: boolean): void {

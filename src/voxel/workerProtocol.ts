@@ -9,7 +9,8 @@ export type WorkerRequest =
   | { type: 'init'; id: number; bodyId: string; params: PlanetGenParams }
   | { type: 'drop'; id: number; bodyId: string }
   | { type: 'gen'; id: number; bodyId: string; face: number; cx: number; cy: number; cz: number }
-  | { type: 'mesh'; id: number; bodyId: string; face: number; cx: number; cy: number; cz: number; vox: Uint8Array }
+  | { type: 'mesh'; id: number; bodyId: string; face: number; cx: number; cy: number; cz: number; vox: Uint8Array; dens: Uint8Array }
+  | { type: 'flora'; id: number; bodyId: string; face: number; cx: number; cy: number }
   | { type: 'tile'; id: number; bodyId: string; face: number; x0: number; y0: number; size: number }
   | { type: 'bake'; id: number; bodyId: string; width: number; height: number }
   | { type: 'textures'; id: number; size: number }
@@ -20,6 +21,7 @@ export type WorkerResponse =
   | { type: 'error'; id: number; message: string }
   | { type: 'gen'; id: number; data: Uint8Array; count: number }
   | { type: 'mesh'; id: number; result: MeshResult }
+  | { type: 'flora'; id: number; inst: Float32Array }
   | { type: 'tile'; id: number; tile: TileResult }
   | { type: 'bake'; id: number; bake: BakeResult }
   | { type: 'textures'; id: number; set: TextureSet }

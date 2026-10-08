@@ -2,17 +2,25 @@ import { Noise3 } from '../core/noise';
 import { hash32, hashFloat } from '../core/rng';
 import { gridToDir, canonicalCell } from './cubesphere';
 import { B } from '../voxel/blocks';
+import { FK, CRYSTAL_VARIANT } from './flora';
 import type { PlanetGenParams } from '../universe/types';
 
 /**
  * Deterministic planet terrain generator. Given the same PlanetGenParams it
- * always produces identical voxels, so only player edits need persisting.
+ * always produces identical terrain, so only player edits need persisting.
+ *
+ * Terrain is a continuous density field sampled at cell centres: every cell
+ * stores a material id and a density byte (0..255, surface at 128) derived
+ * from a signed distance to the surface. The renderer extracts a smooth
+ * isosurface from it, so heights are exact (no steps) while the grid keeps
+ * mining, building and persistence simple.
  *
  * Pipeline per chunk column (32x32 cells on a cube face):
  *   heights on a 34x34 grid (1-cell border for slopes) -> biome classification
  * Per chunk:
  *   3D fields (caves + ores) on a 9x9x9 lattice (4-cell spacing), trilinearly
- *   interpolated -> layered materials -> flora / outcrop structures.
+ *   interpolated -> layered materials + signed distance -> outcrops / spires.
+ * Vegetation is not part of the grid: `floraFor` returns 3D model instances.
  */
 
 export const CHUNK = 32;
@@ -35,12 +43,28 @@ export interface POI {
 
 const POI_CELL = 150;
 
+/**
+ * Density byte for a signed distance (cells, positive = inside). Encodes
+ * +-2 cells linearly around the surface (128) so the iso-surface stays exact;
+ * solid cells are always >= 128.
+ */
+export function densByte(d: number): number {
+  const v = Math.round(128 + d * 63.5);
+  return d >= 0 ? (v < 128 ? 128 : v > 255 ? 255 : v) : (v < 0 ? 0 : v > 127 ? 127 : v);
+}
+
+/** blocks rendered as built cubes (not part of the smooth natural surface) */
+export const STRUCTURE = new Uint8Array(256);
+for (const b of [B.METAL_PLATE, B.GLASS, B.CONCRETE, B.LAMP, B.FLOOR, B.HULL, B.MACHINE, B.MACHINE_OPEN]) STRUCTURE[b] = 1;
+
 export interface ColumnSet {
   /** top solid z per column (32x32) */
   top: Int16Array;
   /** top solid z on the extended 34x34 grid (border included) */
   topExt: Int16Array;
   h: Float32Array;
+  /** continuous surface height in grid units (cell K spans [K, K+1]) */
+  hz: Float32Array;
   surface: Uint8Array;
   sub: Uint8Array;
   rock: Uint8Array;
@@ -289,7 +313,7 @@ export class TerrainGenerator {
   surfaceBlockAt(h: number, slope: number, dx: number, dy: number, dz: number): number {
     if (!this.pointCS) {
       this.pointCS = {
-        top: new Int16Array(1), topExt: new Int16Array(1), h: new Float32Array(1), surface: new Uint8Array(1), sub: new Uint8Array(1),
+        top: new Int16Array(1), topExt: new Int16Array(1), h: new Float32Array(1), hz: new Float32Array(1), surface: new Uint8Array(1), sub: new Uint8Array(1),
         rock: new Uint8Array(1), deep: new Uint8Array(1), subDepth: new Uint8Array(1), fill: new Uint8Array(1), fillTop: new Int16Array(1),
         slope: new Float32Array(1), temp: new Float32Array(1), moist: new Float32Array(1), minTop: 0, maxTop: 0,
       };
@@ -320,7 +344,7 @@ export class TerrainGenerator {
       }
     }
     const cs: ColumnSet = {
-      top: new Int16Array(1024), topExt: new Int16Array(COLS_EXT * COLS_EXT), h: new Float32Array(1024),
+      top: new Int16Array(1024), topExt: new Int16Array(COLS_EXT * COLS_EXT), h: new Float32Array(1024), hz: new Float32Array(1024),
       surface: new Uint8Array(1024), sub: new Uint8Array(1024), rock: new Uint8Array(1024), deep: new Uint8Array(1024),
       subDepth: new Uint8Array(1024), fill: new Uint8Array(1024), fillTop: new Int16Array(1024),
       slope: new Float32Array(1024), temp: new Float32Array(1024), moist: new Float32Array(1024),
@@ -328,7 +352,7 @@ export class TerrainGenerator {
     };
     const maxZ = p.layers - 8;
     for (let o = 0; o < COLS_EXT * COLS_EXT; o++) {
-      cs.topExt[o] = Math.min(maxZ, Math.max(3, Math.floor(p.seaZ + hExt[o])));
+      cs.topExt[o] = Math.min(maxZ, Math.max(3, Math.floor(p.seaZ + hExt[o] - 0.5)));
     }
     for (let j = 0; j < CHUNK; j++) {
       for (let i = 0; i < CHUNK; i++) {
@@ -339,6 +363,7 @@ export class TerrainGenerator {
         const slope = Math.sqrt(sx * sx + sy * sy);
         const ci = i + j * CHUNK;
         cs.h[ci] = h;
+        cs.hz[ci] = Math.min(maxZ + 0.5, Math.max(3.5, p.seaZ + h));
         const top = cs.topExt[o];
         cs.top[ci] = top;
         if (top < cs.minTop) cs.minTop = top;
@@ -385,30 +410,46 @@ export class TerrainGenerator {
     return out;
   }
 
-  /** Material for a voxel given its column data and interpolated fields. */
-  private material(cs: ColumnSet, ci: number, K: number, fields: Float32Array, fo: number, jitter: number): number {
+  /** signed distance of the last evaluated cell (grid units, positive = inside) */
+  private cellD = 0;
+  /** density byte of the last `voxelAt` call */
+  lastDens = 0;
+
+  /**
+   * Material and signed distance for a cell given its column data and
+   * interpolated fields. Writes the distance into `cellD`.
+   */
+  private evalCell(cs: ColumnSet, ci: number, K: number, fields: Float32Array, fo: number, jitter: number): number {
     const p = this.p;
-    if (K <= 1 || (K === 2 && jitter > 0.5)) return B.BEDROCK;
+    if (K <= 1 || (K === 2 && jitter > 0.5)) { this.cellD = 4; return B.BEDROCK; }
     const top = cs.top[ci];
-    if (K > top) {
-      if (cs.fill[ci] && K <= cs.fillTop[ci]) return cs.fill[ci];
+    let d = cs.hz[ci] - (K + 0.5);
+    if (d < 0) {
+      if (cs.fill[ci]) {
+        // frozen / molten sea: flat surface at sea level
+        const dF = p.seaZ - (K + 0.5);
+        if (dF > d) { this.cellD = dF; return dF >= 0 ? cs.fill[ci] : B.AIR; }
+      }
+      this.cellD = d;
       return B.AIR;
     }
     const depth = top - K;
-    // caves
+    // caves: worm tunnels and deep caverns carved as smooth distance fields
     if (p.caveDensity > 0 && K > 6) {
-      const ca = fields[fo + F_CAVE_A], cb = fields[fo + F_CAVE_B];
-      const w = 0.0042 * p.caveDensity;
-      const worm = ca * ca + cb * cb < w;
       const entrance = fields[fo + F_ENTRANCE] > 0.38;
       const underSea = (p.hasOcean && top < p.seaZ + 1);
-      if (!underSea && (depth >= 4 || (entrance && depth >= 0))) {
-        if (worm) return B.AIR;
-        if (depth > 24 && fields[fo + F_CHEESE] > 0.66 - 0.06 * p.caveDensity) return B.AIR;
+      if (!underSea && (depth >= 4 || entrance)) {
+        const ca = fields[fo + F_CAVE_A], cb = fields[fo + F_CAVE_B];
+        const w = 0.0042 * p.caveDensity;
+        let dc = (Math.sqrt(w) - Math.sqrt(ca * ca + cb * cb)) / 0.045;
+        if (depth > 24) dc = Math.max(dc, (fields[fo + F_CHEESE] - (0.66 - 0.06 * p.caveDensity)) * 45);
+        if (-dc < d) d = -dc;
+        if (d < 0) { this.cellD = d; return B.AIR; }
       }
     }
+    this.cellD = d;
     let base: number;
-    if (depth === 0) base = cs.surface[ci];
+    if (depth <= 0) base = cs.surface[ci];
     else if (depth < cs.subDepth[ci]) base = cs.sub[ci];
     else if (depth > 48 + jitter * 6) base = cs.deep[ci];
     else base = cs.rock[ci];
@@ -443,15 +484,16 @@ export class TerrainGenerator {
 
   // ---------------------------------------------------------------- chunks
 
-  /** Fills a chunk. Returns number of non-air voxels. */
-  fillChunk(face: number, cx: number, cy: number, cz: number, out: Uint8Array): number {
+  /** Fills a chunk's materials and densities. Returns number of non-air cells. */
+  fillChunk(face: number, cx: number, cy: number, cz: number, out: Uint8Array, dens: Uint8Array): number {
     const p = this.p;
     const cs = this.getColumns(face, cx, cy);
     const K0 = cz * CHUNK;
-    // Entirely above terrain: only flora may intrude.
+    // Entirely above terrain: only shapes / structures may intrude.
     if (K0 > cs.maxTop + 1) {
       out.fill(0);
-      return this.placeStructures(face, cx, cy, cz, out, cs) + this.stampPois(face, cx, cy, cz, out);
+      dens.fill(0);
+      return this.placeShapes(face, cx, cy, cz, out, dens, cs) + this.stampPois(face, cx, cy, cz, out, dens);
     }
     const lat = this.getLattice(face, cx, cy, cz);
     const fields = new Float32Array(this.fieldCount);
@@ -463,28 +505,28 @@ export class TerrainGenerator {
         for (let x = 0; x < CHUNK; x++) {
           const ci = x + y * CHUNK;
           const top = cs.top[ci];
-          let m: number;
-          if (K > top && !(cs.fill[ci] && K <= cs.fillTop[ci])) m = B.AIR;
-          else {
-            this.interpFields(lat, x, y, z, fields);
-            const jitter = (hash32(p.seed, face, I0 + x, J0 + y, K) & 1023) / 1023;
-            m = this.material(cs, ci, K, fields, 0, jitter);
-          }
-          out[x + y * CHUNK + z * 1024] = m;
+          const idx = x + y * CHUNK + z * 1024;
+          const lim = Math.max(top + 1, cs.fill[ci] ? p.seaZ : -1);
+          if (K > lim) { out[idx] = B.AIR; dens[idx] = 0; continue; }
+          if (K <= top) this.interpFields(lat, x, y, z, fields);
+          const jitter = (hash32(p.seed, face, I0 + x, J0 + y, K) & 1023) / 1023;
+          const m = this.evalCell(cs, ci, K, fields, 0, jitter);
+          out[idx] = m;
+          dens[idx] = densByte(this.cellD);
           if (m) count++;
         }
       }
     }
-    count += this.placeStructures(face, cx, cy, cz, out, cs);
-    count += this.stampPois(face, cx, cy, cz, out);
+    count += this.placeShapes(face, cx, cy, cz, out, dens, cs);
+    count += this.stampPois(face, cx, cy, cz, out, dens);
     return count;
   }
 
-  /** Single voxel (without flora); identical to fillChunk for terrain. */
+  /** Single cell material (terrain only, no shapes / POIs); its density goes to `lastDens`. */
   voxelAt(face: number, I: number, J: number, K: number): number {
     const p = this.p;
-    if (K < 0) return B.BEDROCK;
-    if (K >= p.layers) return B.AIR;
+    if (K < 0) { this.lastDens = 255; return B.BEDROCK; }
+    if (K >= p.layers) { this.lastDens = 0; return B.AIR; }
     if (I < 0 || I >= p.N || J < 0 || J >= p.N) {
       face = canonicalCell(face, I, J, p.N, this.tmpC);
       I = this.tmpC[0];
@@ -493,12 +535,27 @@ export class TerrainGenerator {
     const cx = I >> CHUNK_SHIFT, cy = J >> CHUNK_SHIFT, cz = K >> CHUNK_SHIFT;
     const cs = this.getColumns(face, cx, cy);
     const ci = (I & 31) + (J & 31) * CHUNK;
-    if (K > cs.top[ci] && !(cs.fill[ci] && K <= cs.fillTop[ci])) return B.AIR;
-    const lat = this.getLattice(face, cx, cy, cz);
+    const lim = Math.max(cs.top[ci] + 1, cs.fill[ci] ? p.seaZ : -1);
+    if (K > lim) { this.lastDens = 0; return B.AIR; }
     const fields = new Float32Array(this.fieldCount);
-    this.interpFields(lat, I & 31, J & 31, K & 31, fields);
+    if (K <= cs.top[ci]) {
+      const lat = this.getLattice(face, cx, cy, cz);
+      this.interpFields(lat, I & 31, J & 31, K & 31, fields);
+    }
     const jitter = (hash32(p.seed, face, I, J, K) & 1023) / 1023;
-    return this.material(cs, ci, K, fields, 0, jitter);
+    const m = this.evalCell(cs, ci, K, fields, 0, jitter);
+    this.lastDens = densByte(this.cellD);
+    return m;
+  }
+
+  /** Continuous natural ground height (grid z) at fractional grid coordinates. */
+  groundZ(face: number, gx: number, gy: number): number {
+    const d = this.tmp;
+    gridToDir(face, gx, gy, this.p.N, d);
+    const h = this.heightAt(d[0], d[1], d[2]);
+    const p = this.p;
+    const hh = (p.frozenOcean || p.lavaOcean) && h < 0 ? 0 : h;
+    return p.seaZ + hh;
   }
 
   /** Natural surface top z for a cell (cheap, cached). */
@@ -548,7 +605,7 @@ export class TerrainGenerator {
     return out;
   }
 
-  private stampPois(face: number, cx: number, cy: number, cz: number, out: Uint8Array): number {
+  private stampPois(face: number, cx: number, cy: number, cz: number, out: Uint8Array, dens: Uint8Array): number {
     const I0 = cx * CHUNK, J0 = cy * CHUNK, K0 = cz * CHUNK;
     const R = 10;
     const pois = this.poisNear(face, I0 + 16, J0 + 16, 16 + R + 2);
@@ -561,6 +618,8 @@ export class TerrainGenerator {
         const idx = x + y * CHUNK + z * 1024;
         if (!out[idx] && b) added++;
         out[idx] = b;
+        // built cubes and carved air leave the natural field empty; natural blocks fill it
+        dens[idx] = b === B.AIR || STRUCTURE[b] ? 0 : 255;
       };
       const rnd = (n: number) => hashFloat(hash32(this.p.seed, poi.I, poi.J), n);
       const { I, J, top } = poi;
@@ -601,7 +660,6 @@ export class TerrainGenerator {
             put(gx, gy, kk, k === 2 && w === 0 ? B.GLASS : B.HULL);
           }
         }
-        // fin and engine glow
         put(dirX ? I + len / 2 : I, dirX ? J : J + len / 2, top + 3, B.HULL);
         put(dirX ? I + len / 2 + 1 : I, dirX ? J : J + len / 2 + 1, top + 1, B.LAMP);
         for (let d = 0; d < 9; d++) {
@@ -610,35 +668,48 @@ export class TerrainGenerator {
           put(gx, gy, top + 1, rnd(400 + d) < 0.5 ? B.METAL_PLATE : B.HULL);
         }
       } else {
-        // alien monolith with luminous inlays
+        // alien monolith: dark polished slab with luminous inlays on a basalt plinth
         for (let k = 1; k <= 11; k++) for (let dy = 0; dy <= 1; dy++) for (let dx = 0; dx <= 1; dx++) {
-          put(I + dx, J + dy, top + k, k % 3 === 0 && (dx + dy) % 2 === 0 ? B.LUMINITE : B.BASALT);
+          put(I + dx, J + dy, top + k, k % 3 === 0 && (dx + dy) % 2 === 0 ? B.LAMP : B.HULL);
         }
         for (let dy = -3; dy <= 4; dy++) for (let dx = -3; dx <= 4; dx++) {
           if (Math.hypot(dx - 0.5, dy - 0.5) > 4) continue;
-          put(I + dx, J + dy, top, B.BASALT);
+          put(I + dx, J + dy, top, B.CONCRETE);
         }
+        put(I + 3, J + 1, top + 1, B.LUMINITE);
       }
     }
     return added;
   }
 
-  // ---------------------------------------------------------------- flora & structures
+  // ---------------------------------------------------------------- terrain shapes
 
-  private placeStructures(face: number, cx: number, cy: number, cz: number, out: Uint8Array, cs: ColumnSet): number {
+  /**
+   * Smooth rock shapes merged into the density field: ore-bearing boulders
+   * (outcrops) everywhere and eroded sandstone spires on desert worlds.
+   */
+  private placeShapes(face: number, cx: number, cy: number, cz: number, out: Uint8Array, dens: Uint8Array, cs: ColumnSet): number {
     const p = this.p;
-    if (p.flora === 'none' && p.outcrops <= 0) return 0;
+    const spires = p.flora === 'desert_spires';
+    if (p.outcrops <= 0 && !spires) return 0;
     const N = p.N;
     const M = 4;
     const I0 = cx * CHUNK, J0 = cy * CHUNK, K0 = cz * CHUNK;
     let added = 0;
-    const put = (I: number, J: number, K: number, block: number, replace = false) => {
+    // union of a shape's signed distance with the field
+    const shape = (I: number, J: number, K: number, block: number, d: number) => {
       const x = I - I0, y = J - J0, z = K - K0;
       if (x < 0 || y < 0 || z < 0 || x >= CHUNK || y >= CHUNK || z >= CHUNK) return;
       const idx = x + y * CHUNK + z * 1024;
-      if (out[idx] && !replace) return;
-      if (!out[idx]) added++;
-      out[idx] = block;
+      const old = out[idx];
+      if (STRUCTURE[old]) return;
+      const dOld = (dens[idx] - 128) / 63.5;
+      if (d <= dOld) return;
+      dens[idx] = densByte(d);
+      if (d >= 0) {
+        if (!old) added++;
+        out[idx] = block;
+      }
     };
     for (let J = J0 - M; J < J0 + CHUNK + M; J++) {
       if (J < 6 || J >= N - 6) continue;
@@ -646,138 +717,185 @@ export class TerrainGenerator {
         if (I < 6 || I >= N - 6) continue;
         const hsh = hash32(p.seed, 501, face, I, J);
         const r = (hsh & 0xfffff) / 0xfffff;
-        const floraP = p.floraDensity * 0.012;
         const outcropP = p.outcrops * 0.0018;
-        if (r > floraP + outcropP) continue;
-        // column data (may belong to a neighbouring chunk column on the same face)
+        const spireP = spires ? p.floraDensity * 0.012 * 0.18 : 0;
+        if (r > outcropP + spireP) continue;
         const ncs = (I >= I0 && I < I0 + CHUNK && J >= J0 && J < J0 + CHUNK) ? cs : this.getColumns(face, I >> CHUNK_SHIFT, J >> CHUNK_SHIFT);
         const ci = (I & 31) + (J & 31) * CHUNK;
         const top = ncs.top[ci];
-        if (top + 20 < K0 || top - 6 > K0 + CHUNK) continue;
+        if (top + 24 < K0 || top - 6 > K0 + CHUNK) continue;
         if (ncs.slope[ci] > 0.9) continue;
-        const underwater = p.hasOcean && top < p.seaZ - 1;
-        const filled = ncs.fill[ci] !== 0 && ncs.fillTop[ci] >= top;
-        if (filled) continue;
-        const surf = ncs.surface[ci];
+        if (ncs.fill[ci] !== 0 && ncs.fillTop[ci] >= top) continue;
         const rnd = (n: number) => hashFloat(hsh, n);
-        if (r < outcropP) {
-          this.outcrop(I, J, top, rnd, put);
-          continue;
-        }
-        const kind = p.flora;
-        if (underwater) {
-          if (kind === 'coral' || p.type === 'ocean') this.coral(I, J, top, rnd, put);
-          continue;
-        }
-        if (p.hasOcean && top < p.seaZ + 1) continue;
-        const temp = ncs.temp[ci];
-        if (kind === 'alien_forest') {
-          if (surf !== B.MOSS) continue;
-          if (ncs.moist[ci] < 0.35 && rnd(9) > 0.25) continue;
-          if (rnd(8) < 0.25) this.fungus(I, J, top, rnd, put);
-          else this.tree(I, J, top, rnd, put);
-        } else if (kind === 'fungal') {
-          if (rnd(8) < 0.7) this.fungus(I, J, top, rnd, put); else this.crystal(I, J, top, rnd, put, B.LUMINITE);
-        } else if (kind === 'crystal') {
-          this.crystal(I, J, top, rnd, put, rnd(7) < 0.5 ? B.QUARTZ : B.LUMINITE);
-        } else if (kind === 'desert_spires') {
-          if (rnd(8) < 0.18) this.spire(I, J, top, rnd, put);
-        } else if (kind === 'frost_flora') {
-          if (temp < 5) this.crystal(I, J, top, rnd, put, rnd(6) < 0.3 ? B.CRYOLITH : B.ICE);
-        } else if (kind === 'coral') {
-          if (rnd(8) < 0.3) this.tree(I, J, top, rnd, put);
-        }
+        if (r < outcropP) this.outcrop(I, J, top, rnd, shape);
+        else if (!(p.hasOcean && top < p.seaZ + 1)) this.spire(I, J, top, rnd, shape);
       }
     }
     return added;
   }
 
-  private tree(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void): void {
-    const h = 5 + Math.floor(rnd(1) * 7);
-    for (let k = 1; k <= h; k++) put(I, J, top + k, B.STALK);
-    const cr = 2 + Math.floor(rnd(2) * 2);
-    const cyTop = top + h;
-    for (let dz = -1; dz <= cr; dz++) {
-      const rr = dz <= 0 ? cr : cr - dz * 0.6;
-      for (let dy = -cr; dy <= cr; dy++) for (let dx = -cr; dx <= cr; dx++) {
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d > rr + 0.3) continue;
-        if (dz === -1 && d < cr - 0.5) continue; // hollow underside, drooping rim
-        if (rnd(20 + dx * 7 + dy * 13 + dz * 31) < 0.12) continue;
-        put(I + dx, J + dy, cyTop + dz, B.CANOPY);
-      }
-    }
-    // hanging tendrils
-    for (let t = 0; t < 3; t++) {
-      const dx = Math.round((rnd(40 + t) - 0.5) * 2 * cr), dy = Math.round((rnd(50 + t) - 0.5) * 2 * cr);
-      const len = 1 + Math.floor(rnd(60 + t) * 3);
-      for (let k = 1; k <= len; k++) put(I + dx, J + dy, cyTop - 1 - k, B.CANOPY);
-    }
-  }
-
-  private fungus(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void): void {
-    const h = 2 + Math.floor(rnd(1) * 4);
-    for (let k = 1; k <= h; k++) put(I, J, top + k, B.STALK);
-    const r = 1 + Math.floor(rnd(2) * 3);
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d > r + 0.4) continue;
-      put(I + dx, J + dy, top + h + 1, B.FUNGUS);
-      if (d < r - 0.8) put(I + dx, J + dy, top + h + 2, B.FUNGUS);
-    }
-  }
-
-  private crystal(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void, block: number): void {
-    const h = 2 + Math.floor(rnd(1) * 6);
-    for (let k = 0; k <= h; k++) put(I, J, top + k, block, k === 0);
-    const arms = Math.floor(rnd(2) * 4);
-    for (let a = 0; a < arms; a++) {
-      const dx = rnd(10 + a) < 0.5 ? -1 : 1;
-      const dy = rnd(20 + a) < 0.5 ? 0 : (rnd(30 + a) < 0.5 ? -1 : 1);
-      const hh = 1 + Math.floor(rnd(40 + a) * (h - 1));
-      for (let k = 1; k <= hh; k++) put(I + dx, J + dy, top + k, block);
-    }
-  }
-
-  private spire(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void): void {
-    const h = 6 + Math.floor(rnd(1) * 14);
-    const r0 = 1 + rnd(2) * 1.5;
-    for (let k = 0; k <= h; k++) {
-      const rr = r0 * (1 - k / (h + 3)) + 0.4 + (k % 4 === 0 ? 0.4 : 0);
-      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if (dx * dx + dy * dy > rr * rr) continue;
-        put(I + dx, J + dy, top + k, k % 5 === 2 ? B.RED_ROCK : B.SANDSTONE);
-      }
-    }
-  }
-
-  private coral(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void): void {
-    const h = 1 + Math.floor(rnd(1) * 5);
-    for (let k = 1; k <= h; k++) {
-      put(I, J, top + k, B.CORAL);
-      if (rnd(10 + k) < 0.4) put(I + (rnd(20 + k) < 0.5 ? 1 : -1), J, top + k, B.CORAL);
-      if (rnd(30 + k) < 0.4) put(I, J + (rnd(40 + k) < 0.5 ? 1 : -1), top + k, B.CORAL);
-    }
-  }
-
   /** Surface boulder with exposed ore so early resources are discoverable without deep digging. */
-  private outcrop(I: number, J: number, top: number, rnd: (n: number) => number, put: (I: number, J: number, K: number, b: number, r?: boolean) => void): void {
+  private outcrop(I: number, J: number, top: number, rnd: (n: number) => number, shape: (I: number, J: number, K: number, b: number, d: number) => void): void {
     const p = this.p;
     const ores = p.ores.filter((o) => o.minDepth <= 6);
     const rich = ores.length ? ores[Math.floor(rnd(3) * ores.length)].block : B.IRON_ORE;
-    const r = 1.2 + rnd(1) * 1.4;
+    const r = 1.3 + rnd(1) * 1.6;
     const host = p.palette.rock;
-    for (let dz = -1; dz <= 3; dz++) for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
-      const d = Math.sqrt(dx * dx + dy * dy + (dz * 1.3) ** 2);
-      if (d > r) continue;
+    const cxF = I + 0.5 + (rnd(11) - 0.5) * 0.6, cyF = J + 0.5 + (rnd(12) - 0.5) * 0.6, czF = top + 0.4 + rnd(13) * 0.6;
+    const ex = 0.8 + rnd(14) * 0.5, ey = 0.8 + rnd(15) * 0.5; // elongation
+    const R = Math.ceil(r * 1.5) + 1;
+    for (let dz = -2; dz <= R; dz++) for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const X = I + dx, Y = J + dy, Z = top + dz;
+      const qx = (X + 0.5 - cxF) / ex, qy = (Y + 0.5 - cyF) / ey, qz = (Z + 0.5 - czF) * 1.3;
+      // lumpy boulder: sphere distance perturbed by cell noise
+      const bump = (hashFloat(hash32(p.seed, 77, X, Y, Z), 1) - 0.5) * 0.35;
+      const d = r - Math.sqrt(qx * qx + qy * qy + qz * qz) + bump;
+      if (d < -1) continue;
       const v = rnd(100 + dx * 7 + dy * 11 + dz * 13);
-      put(I + dx, J + dy, top + dz, v < 0.45 ? rich : host, dz <= 0);
+      shape(X, Y, Z, v < 0.45 ? rich : host, d);
     }
-    // crystalline aurelite growths on some outcrops
+    // aurelite crystal vein capping some outcrops
     if (rnd(4) < 0.3) {
       const h = 1 + Math.floor(rnd(5) * 3);
-      for (let k = 1; k <= h; k++) put(I, J, top + Math.ceil(r) + k - 1, B.AURELITE, true);
+      const base = Math.floor(czF + r * 0.7);
+      for (let k = 0; k < h + 1; k++) {
+        const Z = base + k;
+        const d = Math.min(0.75 - Math.hypot(I + 0.5 - cxF, J + 0.5 - cyF), base + h + 0.5 - (Z + 0.5));
+        shape(I, J, Z, B.AURELITE, d);
+      }
     }
+  }
+
+  /** Eroded rock pillar with strata (desert worlds). */
+  private spire(I: number, J: number, top: number, rnd: (n: number) => number, shape: (I: number, J: number, K: number, b: number, d: number) => void): void {
+    const h = 6 + Math.floor(rnd(1) * 14);
+    const r0 = 1.4 + rnd(2) * 1.6;
+    const cxF = I + 0.5, cyF = J + 0.5;
+    const R = Math.ceil(r0 + 2);
+    for (let k = -1; k <= h + 1; k++) {
+      const K = top + k;
+      const t = Math.max(0, k) / (h + 3);
+      // tapering, with wider caprock bands every few metres
+      const rr = r0 * (1 - t * 0.75) + 0.3 + (k % 5 === 4 ? 0.45 : 0) + Math.sin(k * 1.7 + rnd(3) * 6) * 0.15;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const dist = Math.hypot(I + dx + 0.5 - cxF, J + dy + 0.5 - cyF);
+        const d = Math.min(rr - dist, top + h + 1 - (K + 0.5));
+        if (d < -1) continue;
+        shape(I + dx, J + dy, K, k % 5 === 2 ? B.RED_ROCK : B.SANDSTONE, d);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- vegetation
+
+  /**
+   * Deterministic 3D vegetation instances for a chunk column (see flora.ts).
+   * Placement follows biome, temperature, moisture, slope and a forest mask so
+   * trees gather into groves and clearings.
+   */
+  floraFor(face: number, cx: number, cy: number): Float32Array {
+    const p = this.p;
+    const outArr: number[] = [];
+    if (p.flora === 'none' && p.type !== 'barren' && p.type !== 'desert') return new Float32Array(0);
+    const cs = this.getColumns(face, cx, cy);
+    const N = p.N, R = p.radius;
+    const I0 = cx * CHUNK, J0 = cy * CHUNK;
+    const fd = p.floraDensity;
+    const d = this.tmp;
+    const push = (kind: number, gx: number, gy: number, scale: number, yaw: number, variant: number, seed: number, sink = 0.15) => {
+      const gz = this.groundZ(face, gx, gy) - sink;
+      outArr.push(kind, gx, gy, gz, scale, yaw, variant, seed);
+    };
+    for (let j = 0; j < CHUNK; j++) {
+      const J = J0 + j;
+      if (J < 4 || J >= N - 4) continue;
+      for (let i = 0; i < CHUNK; i++) {
+        const I = I0 + i;
+        if (I < 4 || I >= N - 4) continue;
+        const ci = i + j * CHUNK;
+        const hsh = hash32(p.seed, 733, face, I, J);
+        const r = (hsh & 0xfffff) / 0xfffff;
+        if (r > 0.12) continue; // fast reject: nothing denser than this
+        const rnd = (n: number) => hashFloat(hsh, n);
+        const gx = I + 0.15 + rnd(1) * 0.7, gy = J + 0.15 + rnd(2) * 0.7;
+        const yaw = rnd(3) * Math.PI * 2;
+        const top = cs.top[ci];
+        const slope = cs.slope[ci];
+        const filled = cs.fill[ci] !== 0 && cs.fillTop[ci] >= top;
+        const underwater = p.hasOcean && cs.hz[ci] < p.seaZ - 0.6;
+        const shore = p.hasOcean && cs.hz[ci] < p.seaZ + 2.5;
+        const temp = cs.temp[ci], moist = cs.moist[ci];
+        const surf = cs.surface[ci];
+        gridToDir(face, I + 0.5, J + 0.5, N, d);
+        // groves: low-frequency mask so forests have edges and clearings
+        const grove = this.nBiome.fbm(d[0] * R / 160 + 40, d[1] * R / 160, d[2] * R / 160, 3);
+        const forest = Math.min(1, Math.max(0, 0.5 + grove * 1.6 + (moist - 0.5) * 0.8));
+        // loose boulders everywhere (more on barren / desert worlds)
+        const rockP = p.type === 'barren' ? 0.006 : p.type === 'desert' ? 0.004 : 0.0022;
+        if (r < rockP && !filled && !underwater && slope < 1.4) {
+          push(FK.ROCK, gx, gy, 0.5 + rnd(4) * rnd(5) * 2.2, yaw, Math.floor(rnd(6) * 4), hsh, 0.25);
+          continue;
+        }
+        if (filled || slope > 0.85) continue;
+        const k = r - rockP;
+        switch (p.flora) {
+          case 'alien_forest': {
+            if (underwater || shore && !(p.hasOcean && cs.hz[ci] > p.seaZ + 0.5)) break;
+            if (surf !== B.MOSS && surf !== B.SNOW && surf !== B.SOIL) break;
+            const pTree = fd * 0.028 * forest;
+            const pBush = fd * 0.03 * (0.4 + forest * 0.6);
+            const pFern = fd * 0.025 * forest;
+            const sc = 0.75 + rnd(7) * 0.6;
+            if (k < pTree) {
+              let kind: FK;
+              if (shore && temp > 14) kind = FK.TREE_PALM;
+              else if (temp < 4 || surf === B.SNOW) kind = rnd(8) < 0.12 ? FK.TREE_DEAD : FK.TREE_CONIFER;
+              else if (moist < 0.3) kind = rnd(8) < 0.5 ? FK.TREE_DEAD : FK.TREE_BROAD;
+              else kind = rnd(8) < 0.18 ? FK.TREE_ALIEN : rnd(9) < 0.3 ? FK.TREE_CONIFER : FK.TREE_BROAD;
+              push(kind, gx, gy, sc, yaw, Math.floor(rnd(10) * 4), hsh);
+            } else if (k < pTree + pBush) push(FK.BUSH, gx, gy, 0.6 + rnd(7) * 0.8, yaw, Math.floor(rnd(10) * 3), hsh, 0.05);
+            else if (k < pTree + pBush + pFern && temp > 0) push(FK.FERN, gx, gy, 0.7 + rnd(7) * 0.6, yaw, Math.floor(rnd(10) * 2), hsh, 0.02);
+            else if (k < pTree + pBush + pFern + fd * 0.004 && moist > 0.45) push(FK.FUNGUS_SMALL, gx, gy, 0.6 + rnd(7) * 0.8, yaw, 0, hsh, 0.02);
+            break;
+          }
+          case 'fungal': {
+            if (underwater) break;
+            const pBig = fd * 0.012 * (0.3 + forest);
+            const pSmall = fd * 0.04;
+            if (k < pBig) push(FK.FUNGUS_GIANT, gx, gy, 0.7 + rnd(7) * 0.8, yaw, Math.floor(rnd(10) * 3), hsh);
+            else if (k < pBig + pSmall) push(FK.FUNGUS_SMALL, gx, gy, 0.6 + rnd(7) * 1.0, yaw, Math.floor(rnd(10) * 3), hsh, 0.02);
+            else if (k < pBig + pSmall + fd * 0.004) push(FK.CRYSTAL, gx, gy, 0.6 + rnd(7) * 0.8, yaw, CRYSTAL_VARIANT.LUMINITE, hsh, 0.3);
+            break;
+          }
+          case 'crystal': {
+            if (underwater) break;
+            if (k < fd * 0.02) push(FK.CRYSTAL, gx, gy, 0.6 + rnd(7) * rnd(8) * 1.6, yaw, rnd(9) < 0.6 ? CRYSTAL_VARIANT.QUARTZ : CRYSTAL_VARIANT.LUMINITE, hsh, 0.3);
+            else if (k < fd * 0.026 && temp > -20) push(FK.TREE_DEAD, gx, gy, 0.6 + rnd(7) * 0.5, yaw, Math.floor(rnd(10) * 4), hsh);
+            break;
+          }
+          case 'desert_spires': {
+            if (k < fd * 0.006) push(FK.TREE_DEAD, gx, gy, 0.5 + rnd(7) * 0.5, yaw, Math.floor(rnd(10) * 4), hsh);
+            else if (k < fd * 0.016 && moist > 0.2) push(FK.BUSH, gx, gy, 0.4 + rnd(7) * 0.5, yaw, 2, hsh, 0.05);
+            break;
+          }
+          case 'frost_flora': {
+            if (k < fd * 0.012 && temp < 5) push(FK.CRYSTAL, gx, gy, 0.6 + rnd(7) * rnd(8) * 1.5, yaw, rnd(9) < 0.3 ? CRYSTAL_VARIANT.CRYOLITH : CRYSTAL_VARIANT.ICE, hsh, 0.3);
+            else if (k < fd * 0.02 && temp > -25 && !underwater) push(FK.TREE_CONIFER, gx, gy, 0.6 + rnd(7) * 0.5, yaw, 3, hsh);
+            break;
+          }
+          case 'coral': {
+            if (underwater) {
+              if (k < fd * 0.03) push(FK.CORAL, gx, gy, 0.6 + rnd(7) * 1.2, yaw, Math.floor(rnd(10) * 3), hsh, 0.1);
+            } else if (k < fd * 0.02) push(shore ? FK.TREE_PALM : FK.TREE_BROAD, gx, gy, 0.7 + rnd(7) * 0.5, yaw, Math.floor(rnd(10) * 4), hsh);
+            else if (k < fd * 0.04) push(FK.BUSH, gx, gy, 0.6 + rnd(7) * 0.6, yaw, 0, hsh, 0.05);
+            break;
+          }
+          default:
+            break;
+        }
+      }
+    }
+    return new Float32Array(outArr);
   }
 }
 

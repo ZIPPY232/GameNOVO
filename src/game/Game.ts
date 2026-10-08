@@ -6,7 +6,8 @@ import { AudioEngine, type Mood } from '../audio/Audio';
 import { HUD, type CompassMarker } from '../ui/HUD';
 import { Universe } from './Universe';
 import { Effects } from './Effects';
-import { Player } from './Player';
+import { Player, DIG_RADIUS } from './Player';
+import { STRUCTURE } from '../planet/terrain';
 import { Pilot, fmtDist } from './Pilot';
 import { Vitals, type Environment } from '../survival/Vitals';
 import { Inventory } from '../items/Inventory';
@@ -485,10 +486,10 @@ export class Game {
     for (let r = 0; r <= 4; r++) {
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const I = Math.floor(g.x) + dx, J = Math.floor(g.y) + dy;
-        let k = Math.floor(g.z) + 8;
-        while (k > 1 && !phys.solid(g.face, I, J, k)) k--;
-        const x = I + 0.5, y = J + 0.5, z = k + 1.01;
+        const x = Math.floor(g.x) + dx + 0.5, y = Math.floor(g.y) + dy + 0.5;
+        const ground = phys.world.surfaceBelow(g.face, x, y, g.z + 8, 40);
+        if (ground === -Infinity) continue;
+        const z = ground + 0.02;
         if (free(x, y, z)) {
           g.x = x; g.y = y; g.z = z;
           phys.fromGrid(g, p);
@@ -883,6 +884,60 @@ export class Game {
     this.hotbar = i;
     this.audio.ui('hover');
     this.hud.updateHotbar(this.inventory, this.hotbar);
+  }
+
+  /** Carve the terrain at a hit with the extractor; awards the removed materials. */
+  digTerrain(t: RayHit, amount: number): number {
+    const phys = this.universe.focus?.physics;
+    if (!phys) return 0;
+    const w = phys.world;
+    const c = t.point.clone().addScaledVector(t.normal, -0.35);
+    const g = { face: 0, x: 0, y: 0, z: 0 };
+    phys.toGrid(c, g);
+    const removed = w.dig(g.face, g.x, g.y, g.z, DIG_RADIUS, amount, (b) => isFinite(BLOCKS[b].hardness));
+    if (!removed.length) return 0;
+    this.universe.dirtyEdits.add(w.bodyId);
+    const gains = new Map<string, number>();
+    for (const b of removed) {
+      const def = BLOCKS[b];
+      if (b === B.LAMP) continue;
+      this.stats.mined = (this.stats.mined ?? 0) + 1;
+      if (!def.drop) continue;
+      const n = def.dropCount * (this.vitals.upgrades.extractorMk2 && def.ore ? 2 : 1);
+      gains.set(def.drop, (gains.get(def.drop) ?? 0) + n);
+      if (def.ore) {
+        const d = item(def.drop);
+        this.discover({ id: def.drop, kind: 'resource', title: `Recurso: ${d.name}`, text: d.desc, time: Date.now(), systemId: this.universe.def.id });
+      }
+    }
+    const col = this.player.blockColor(removed[0]);
+    this.effects.burstDebris(t.point, t.normal, col, Math.min(14, 4 + removed.length * 2));
+    this.effects.sparksAt(t.point, t.normal, col.clone().multiplyScalar(0.5), 10, 2, 0.4, 0.12, 0.9, 2.5);
+    this.audio.blockBreak(BLOCKS[removed[0]].sound);
+    for (const [id, n] of gains) {
+      const left = this.inventory.add(id, n);
+      if (left < n) { this.audio.ui('pickup'); this.toast(`+${n - left} ${item(id).name}`); }
+      if (left > 0) this.toast('Inventário cheio', 'var(--red)');
+    }
+    return removed.length;
+  }
+
+  /** Raise terrain with a natural material from the inventory. */
+  fillTerrain(t: RayHit, itemId: string, block: number): boolean {
+    const phys = this.universe.focus?.physics;
+    if (!phys) return false;
+    const c = t.point.clone().addScaledVector(t.normal, 0.45);
+    const g = { face: 0, x: 0, y: 0, z: 0 };
+    phys.toGrid(c, g);
+    // never bury the player
+    if (c.distanceTo(this.player.pos.clone().addScaledVector(this.player.up, 0.9)) < 1.6) return false;
+    if (!this.inventory.remove(itemId, 1)) return false;
+    phys.world.fill(g.face, g.x, g.y, g.z, 0.9, 0.85, block);
+    this.universe.dirtyEdits.add(phys.world.bodyId);
+    this.effects.sparksAt(c, t.normal, this.player.blockColor(block).multiplyScalar(0.4), 8, 1.2, 0.5, 0.1, 0.5);
+    this.audio.place();
+    this.stats.placed = (this.stats.placed ?? 0) + 1;
+    return true;
   }
 
   breakBlock(t: RayHit): void {
@@ -1326,10 +1381,16 @@ export class Game {
   private updateTargetBox(camPos: THREE.Vector3): void {
     const t = this.mode === 'onfoot' ? this.player.target : null;
     const phys = this.universe.focus?.physics;
-    if (!t || !phys) { this.effects.setTargetBox(null, 0); return; }
-    // corners are planet-local == frame-local when on a planet
-    const corners = phys.cellCorners(t.face, t.I, t.J, t.K, 0.004);
-    this.effects.setTargetBox(corners, this.player.mineProgress);
+    if (!t || !phys) { this.effects.setTargetBox(null, 0); this.effects.setTargetRing(null, null, 1, 0); return; }
+    if (STRUCTURE[t.block] || this.player.targetMachine) {
+      // built cubes: box outline (corners are planet-local == frame-local on a planet)
+      const corners = phys.cellCorners(t.face, t.I, t.J, t.K, 0.004);
+      this.effects.setTargetBox(corners, this.player.mineProgress);
+      this.effects.setTargetRing(null, null, 1, 0);
+    } else {
+      this.effects.setTargetBox(null, 0);
+      this.effects.setTargetRing(t.point, t.normal, DIG_RADIUS, this.player.mineProgress);
+    }
     void camPos;
   }
 
@@ -1403,7 +1464,7 @@ export class Game {
     if (phys && this.mode === 'onfoot') {
       const g = { face: 0, x: 0, y: 0, z: 0 };
       phys.toGrid(this.player.pos, g);
-      const top = phys.world.gen.surfaceTop(g.face, Math.floor(g.x), Math.floor(g.y));
+      const top = phys.world.gen.groundZ(g.face, g.x, g.y);
       cave = THREE.MathUtils.clamp((top - g.z - 2) / 6, 0, 1);
     }
     this.audio.update(dt, {

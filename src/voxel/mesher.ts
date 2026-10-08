@@ -1,9 +1,11 @@
 import { gridToDir } from '../planet/cubesphere';
 import { BLOCK_LAYERS, BLOCK_OPAQUE, BLOCK_TRANSLUCENT, B } from './blocks';
-import { CHUNK } from '../planet/terrain';
+import { CHUNK, STRUCTURE } from '../planet/terrain';
+import type { SmoothBuffers } from './smoothMesher';
 
 /**
- * Greedy mesher for curved cube-sphere voxel chunks.
+ * Greedy mesher for built cubes (metal panels, glass, concrete...) on the
+ * curved cube-sphere grid. Natural terrain is meshed by smoothMesher.
  *
  * Faces are merged per slice when they share material, ambient-occlusion
  * pattern and sky-light level. Merged quads are capped at MAX_RUN cells so the
@@ -33,6 +35,7 @@ export interface MeshBuffers {
 }
 
 export interface MeshResult {
+  smooth: SmoothBuffers | null;
   opaque: MeshBuffers | null;
   translucent: MeshBuffers | null;
   origin: [number, number, number];
@@ -139,7 +142,7 @@ export function meshChunk(inp: MeshInput): MeshResult {
             q[axis] = w; q[ua] = u; q[va] = v;
             const b = vAt(q[0], q[1], q[2]);
             let key = 0;
-            if (b !== B.AIR && b < B.MACHINE) {
+            if (STRUCTURE[b] && b < B.MACHINE) {
               q[axis] = w + s;
               const n = vAt(q[0], q[1], q[2]);
               const bOpaque = BLOCK_OPAQUE[b] === 1;
@@ -268,5 +271,5 @@ export function meshChunk(inp: MeshInput): MeshResult {
       }
     }
   }
-  return { opaque: opaque.finish(), translucent: trans.finish(), origin };
+  return { smooth: null, opaque: opaque.finish(), translucent: trans.finish(), origin };
 }

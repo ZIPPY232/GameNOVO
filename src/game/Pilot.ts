@@ -129,14 +129,15 @@ export class Pilot {
     if (f && f.body === frame && f.physics) {
       const gp = { face: 0, x: 0, y: 0, z: 0 };
       f.physics.toGrid(p, gp);
-      const I = Math.floor(gp.x), J = Math.floor(gp.y), K = Math.floor(gp.z);
-      if (BLOCK_SOLID[f.physics.world.getBlock(gp.face, I, J, K)] === 1) {
-        // depth to the top of the solid column above this cell (max 3)
-        let top = K + 1;
-        for (let k = K + 1; k < K + 4; k++) { if (BLOCK_SOLID[f.physics.world.getBlock(gp.face, I, J, k)] === 1) top = k + 1; else break; }
-        return top - gp.z;
+      const w = f.physics.world;
+      if (w.sample(gp.face, gp.x, gp.y, gp.z) >= 0.5) {
+        // depth to the surface above this point (max 3)
+        const top = w.surfaceBelow(gp.face, gp.x, gp.y, gp.z + 3, 3.2);
+        return Math.max(0.02, top - gp.z);
       }
-      return 0;
+      // slightly above the surface: negative distance (for gear contact)
+      const below = w.surfaceBelow(gp.face, gp.x, gp.y, gp.z, 0.3);
+      return below === -Infinity ? -1 : below - gp.z;
     }
     return this.surfaceRadiusAt(p) - p.length();
   }

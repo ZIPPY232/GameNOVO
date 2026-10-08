@@ -49,6 +49,9 @@ export class Effects {
   readonly beam: THREE.Mesh;
   private beamMat: THREE.ShaderMaterial;
   readonly highlight: THREE.LineSegments;
+  /** circular marker on smooth terrain (dig area) */
+  readonly ring: THREE.Group;
+  private ringArc: THREE.Line;
   readonly crack: THREE.Mesh;
   private crackMat: THREE.ShaderMaterial;
   readonly ghost: THREE.Group = new THREE.Group();
@@ -128,7 +131,20 @@ void main(){
     this.crack.frustumCulled = false;
     this.crack.visible = false;
     this.ghost.visible = false;
-    this.group.add(this.debrisMesh, this.sparkPts, this.beam, this.highlight, this.crack, this.ghost);
+    // dig marker: thin circle plus a progress arc
+    this.ring = new THREE.Group();
+    const circle = (n: number, r: number) => {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= n; i++) { const a = (i / n) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0)); }
+      return new THREE.BufferGeometry().setFromPoints(pts);
+    };
+    const ringMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0.6, 0.95, 1.0).multiplyScalar(2), transparent: true, opacity: 0.55, depthWrite: false });
+    this.ring.add(new THREE.Line(circle(48, 1), ringMat));
+    this.ringArc = new THREE.Line(circle(48, 0.86), new THREE.LineBasicMaterial({ color: new THREE.Color(1.0, 0.75, 0.3).multiplyScalar(3), transparent: true, opacity: 0.9, depthWrite: false }));
+    this.ring.add(this.ringArc);
+    this.ring.visible = false;
+    this.ring.traverse((o) => { o.frustumCulled = false; });
+    this.group.add(this.debrisMesh, this.sparkPts, this.beam, this.highlight, this.crack, this.ghost, this.ring);
   }
 
   /** Set the highlight box and crack overlay from 8 corners (frame space). Order: bit0=x, bit1=y, bit2=z. */
@@ -160,6 +176,17 @@ void main(){
       ca.needsUpdate = true;
       this.crackMat.uniforms.uProgress.value = progress;
     }
+  }
+
+  /** Ring marker lying on the surface at `point` (frame space), `progress` 0..1 drawn as an arc. */
+  setTargetRing(point: THREE.Vector3 | null, normal: THREE.Vector3 | null, radius: number, progress: number): void {
+    if (!point || !normal) { this.ring.visible = false; return; }
+    this.ring.visible = true;
+    this.ring.position.copy(point).addScaledVector(normal, 0.04);
+    this.ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+    this.ring.scale.setScalar(radius);
+    const n = Math.round(Math.max(0, Math.min(1, progress)) * 48);
+    this.ringArc.geometry.setDrawRange(0, n > 0 ? n + 1 : 0);
   }
 
   setBeam(from: THREE.Vector3 | null, to: THREE.Vector3 | null, color: THREE.Color | null, time: number): void {

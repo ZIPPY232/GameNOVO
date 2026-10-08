@@ -265,6 +265,7 @@ export class MachineSystem {
     const m = this.instantiate(d);
     const h = machineHeight(type);
     for (let k = 0; k < h; k++) this.world.setBlock(face, I, J, K + k, B.MACHINE);
+    this.world.flattenUnder(face, I, J, K);
     this.gridDirty = true;
     this.pressurizedCache.time = -1;
     return m;

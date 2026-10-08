@@ -130,27 +130,51 @@ normal *= faceDirection;
     const up = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
     const seed = w.params.seed;
+    // smooth ground height at every cell centre of the patch (NaN = no grass there)
+    const S = 2 * R + 3;
+    const hz = new Float32Array(S * S).fill(NaN);
+    for (let dj = -R - 1; dj <= R + 1; dj++) {
+      for (let di = -R - 1; di <= R + 1; di++) {
+        const I = I0 + di, J = J0 + dj;
+        for (let k = Kp + 6; k >= Kp - 10; k--) {
+          const b = w.getLoaded(g.face, I, J, k);
+          if (b === B.UNKNOWN) break;
+          if (b === B.AIR) continue;
+          if (b === B.MOSS) {
+            // iso crossing between this cell centre and the one above
+            const d0 = w.densAt(g.face, I, J, k) / 255, d1 = w.densAt(g.face, I, J, k + 1) / 255;
+            hz[(di + R + 1) + (dj + R + 1) * S] = k + 0.5 + (d0 - 0.5) / Math.max(1e-3, d0 - d1);
+          }
+          break;
+        }
+      }
+    }
+    const heightAt = (x: number, y: number): number => {
+      // bilinear between cell centres (x, y relative to I0/J0 grid)
+      const fx = x - 0.5 + R + 1, fy = y - 0.5 + R + 1;
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      const tx = fx - ix, ty = fy - iy;
+      const h00 = hz[ix + iy * S], h10 = hz[ix + 1 + iy * S], h01 = hz[ix + (iy + 1) * S], h11 = hz[ix + 1 + (iy + 1) * S];
+      if (isNaN(h00 + h10 + h01 + h11)) {
+        const own = hz[Math.round(fx - 0.5 + 0.5) + Math.round(fy) * S];
+        return own;
+      }
+      return (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty;
+    };
     let n = 0;
     for (let dj = -R; dj <= R && n < this.max; dj++) {
       for (let di = -R; di <= R && n < this.max; di++) {
         if (di * di + dj * dj > R * R) continue;
+        if (isNaN(hz[(di + R + 1) + (dj + R + 1) * S])) continue;
         const I = I0 + di, J = J0 + dj;
-        // find the exposed top near the player's height
-        let top = -1;
-        for (let k = Kp + 6; k >= Kp - 10; k--) {
-          const b = w.getLoaded(g.face, I, J, k);
-          if (b === B.UNKNOWN) break;
-          if (b !== B.AIR) {
-            if (b === B.MOSS && w.getLoaded(g.face, I, J, k + 1) === B.AIR) top = k;
-            break;
-          }
-        }
-        if (top < 0) continue;
         const hsh = hash32(seed, 777, g.face, I, J);
-        const count = (hsh & 3) + (density >= 2 ? 1 : 0);
+        const count = (hsh & 3) + 1 + (density >= 2 ? 2 : 0);
         for (let t = 0; t < count && n < this.max; t++) {
           const rx = hashFloat(hsh, t * 3 + 1), ry = hashFloat(hsh, t * 3 + 2), rs = hashFloat(hsh, t * 3 + 3);
-          gridToPos(g.face, I + 0.12 + rx * 0.76, J + 0.12 + ry * 0.76, top + 1, N, base, p);
+          const lx = di + rx, ly = dj + ry;
+          const z = heightAt(lx, ly);
+          if (isNaN(z)) continue;
+          gridToPos(g.face, I0 + lx, J0 + ly, z - 0.04, N, base, p);
           up.set(p[0], p[1], p[2]).normalize();
           q.setFromUnitVectors(yAxis, up);
           q.multiply(new THREE.Quaternion().setFromAxisAngle(yAxis, rs * 6.28));

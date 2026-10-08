@@ -10,7 +10,7 @@ import { WorkerPool } from '../voxel/workerProtocol';
 import { VoxelWorld } from '../voxel/VoxelWorld';
 import { PlanetLOD, createLodMaterial, type LodUniforms } from '../planet/PlanetLOD';
 import { TerrainGenerator } from '../planet/terrain';
-import { createTerrainMaterial, makeArrayTextures, makeLayerProps, type TerrainUniforms } from '../render/TerrainMaterial';
+import { createTerrainMaterial, createSmoothTerrainMaterial, makeArrayTextures, makeLayerProps, makeBlockLayerTexture, type TerrainUniforms } from '../render/TerrainMaterial';
 import type { TextureSet } from '../render/textureGen';
 import { VoxelPhysics } from '../physics/VoxelPhysics';
 import { Weather } from '../weather/Weather';
@@ -90,6 +90,7 @@ export class Universe {
   lodUniforms: LodUniforms;
   matOpaque!: THREE.Material;
   matTrans!: THREE.Material;
+  matSmooth!: THREE.Material;
   lodMat: THREE.Material;
   private pmrem: THREE.PMREMGenerator;
   private envRT: THREE.WebGLRenderTarget | null = null;
@@ -135,6 +136,7 @@ export class Universe {
       uBioTint: { value: new THREE.Vector3(0.4, 0.6, 0.5) }, uRockTint: { value: new THREE.Vector3(1, 1, 1) }, uRenderToPlanet: { value: new THREE.Matrix4() },
       uWetness: { value: 0 }, uUpView: { value: new THREE.Vector3(0, 1, 0) }, uScanCenter: { value: new THREE.Vector3() }, uScanRadius: { value: 0 },
       uScanStrength: { value: 0 }, uTime: { value: 0 }, uSkyAmbient: { value: 0.08 },
+      tBlockLayers: { value: makeBlockLayerTexture() }, uTexScale: { value: 0.42 },
     };
     this.lodUniforms = {
       uDiscardDir: { value: new THREE.Vector3(0, 1, 0) }, uDiscardR: { value: 0 }, uPlanetR: { value: 1 }, uRenderToPlanet: this.terrainUniforms.uRenderToPlanet, tNoise: { value: renderer.noise3D },
@@ -164,6 +166,7 @@ export class Universe {
     this.terrainUniforms.tMaterial.value = material;
     this.matOpaque = createTerrainMaterial(this.terrainUniforms, false);
     this.matTrans = createTerrainMaterial(this.terrainUniforms, true);
+    this.matSmooth = createSmoothTerrainMaterial(this.terrainUniforms);
   }
 
   // ------------------------------------------------------------------ systems
@@ -299,7 +302,7 @@ export class Universe {
           this.edits.set(f.key, edits);
         }
         if (this.focus === f && !f.voxels) {
-          f.voxels = new VoxelWorld(f.key, f.body.def.gen!, this.pool, this.editsFor(f.key), this.matOpaque, this.matTrans);
+          f.voxels = new VoxelWorld(f.key, f.body.def.gen!, this.pool, this.editsFor(f.key), this.matOpaque, this.matTrans, this.matSmooth);
           f.physics = new VoxelPhysics(f.voxels);
           f.root.add(f.voxels.group);
         }

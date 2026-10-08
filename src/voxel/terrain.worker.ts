@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { TerrainGenerator, CHUNK, CHUNK_VOL } from '../planet/terrain';
 import { meshChunk, PAD, PAD2 } from './mesher';
+import { meshSmooth } from './smoothMesher';
 import { generateTile, bakePlanet } from '../planet/tilegen';
 import { generateTextures } from '../render/textureGen';
 import { B } from './blocks';
@@ -38,19 +39,23 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       }
       case 'gen': {
         const g = gen(msg.bodyId);
-        const data = new Uint8Array(CHUNK_VOL);
-        const count = g.fillChunk(msg.face, msg.cx, msg.cy, msg.cz, data);
-        reply({ type: 'gen', id: msg.id, data, count }, [data.buffer]);
+        // materials and densities share one buffer: [blocks | densities]
+        const buf = new Uint8Array(CHUNK_VOL * 2);
+        const count = g.fillChunk(msg.face, msg.cx, msg.cy, msg.cz, buf.subarray(0, CHUNK_VOL), buf.subarray(CHUNK_VOL));
+        reply({ type: 'gen', id: msg.id, data: buf, count }, [buf.buffer]);
         break;
       }
       case 'mesh': {
         const g = gen(msg.bodyId);
-        const vox = msg.vox;
+        const vox = msg.vox, dens = msg.dens;
         const I0 = msg.cx * CHUNK - 1, J0 = msg.cy * CHUNK - 1, K0 = msg.cz * CHUNK - 1;
-        // fill unknown padding voxels deterministically
+        // fill unknown padding cells deterministically (terrain only)
         for (let z = 0; z < PAD; z++) for (let y = 0; y < PAD; y++) for (let x = 0; x < PAD; x++) {
           const i = x + y * PAD + z * PAD2;
-          if (vox[i] === B.UNKNOWN) vox[i] = g.voxelAt(msg.face, I0 + x, J0 + y, K0 + z);
+          if (vox[i] === B.UNKNOWN) {
+            vox[i] = g.voxelAt(msg.face, I0 + x, J0 + y, K0 + z);
+            dens[i] = g.lastDens;
+          }
         }
         // natural surface tops on the padded column grid
         const topExt = new Int16Array(PAD * PAD);
@@ -58,7 +63,9 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
           topExt[x + y * PAD] = g.surfaceTop(msg.face, I0 + x, J0 + y);
         }
         const res = meshChunk({ face: msg.face, cx: msg.cx, cy: msg.cy, cz: msg.cz, N: g.p.N, baseRadius: g.p.baseRadius, vox, topExt });
+        res.smooth = meshSmooth({ face: msg.face, cx: msg.cx, cy: msg.cy, cz: msg.cz, N: g.p.N, baseRadius: g.p.baseRadius, vox, dens, topExt, origin: res.origin });
         const transfers: Transferable[] = [];
+        if (res.smooth) transfers.push(res.smooth.position.buffer, res.smooth.normal.buffer, res.smooth.mats.buffer, res.smooth.data.buffer);
         for (const m of [res.opaque, res.translucent]) {
           if (!m) continue;
           transfers.push(m.position.buffer, m.normal.buffer, m.tangent.buffer, m.uv.buffer, m.data.buffer, m.index.buffer);
@@ -81,6 +88,12 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       case 'textures': {
         const t = generateTextures(msg.size);
         reply({ type: 'textures', id: msg.id, set: t }, [t.albedo.buffer, t.material.buffer]);
+        break;
+      }
+      case 'flora': {
+        const g = gen(msg.bodyId);
+        const inst = g.floraFor(msg.face, msg.cx, msg.cy);
+        reply({ type: 'flora', id: msg.id, inst }, [inst.buffer]);
         break;
       }
       case 'columns': {

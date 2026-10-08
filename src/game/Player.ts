@@ -7,6 +7,7 @@ import { item, placeableBlock, type ToolId, type MachineType } from '../items/it
 import { buildMachineModel, machineHeight, type Machine } from '../building/Machines';
 import type { RayHit, GridPos } from '../physics/VoxelPhysics';
 import { canonicalCell } from '../planet/cubesphere';
+import { STRUCTURE } from '../planet/terrain';
 import { ShipModel } from '../ship/ShipModel';
 import type { Game } from './Game';
 
@@ -17,6 +18,8 @@ import type { Game } from './Game';
  */
 
 const HALF_W = 0.3;
+/** radius (m) of the extractor's carving sphere on natural terrain */
+export const DIG_RADIUS = 1.0;
 const HEIGHT = 1.8;
 const EYE = 1.62;
 
@@ -53,6 +56,9 @@ export class Player {
   private lastRadialV = 0;
   mineProgress = 0;
   private mineKey = '';
+  private digAcc = 0;
+  private digTimer = 0;
+  private sinceRemove = 0;
   mining = false;
   private buildAnim = 0;
   private interactAnim = 0;
@@ -354,7 +360,7 @@ export class Player {
     const phys = this.physics();
     if (!phys) return 'rock';
     phys.toGrid(this.pos, this.tmpG);
-    const b = phys.world.getBlock(this.tmpG.face, Math.floor(this.tmpG.x), Math.floor(this.tmpG.y), Math.floor(this.tmpG.z - 0.05));
+    const b = phys.world.getBlock(this.tmpG.face, Math.floor(this.tmpG.x), Math.floor(this.tmpG.y), Math.floor(this.tmpG.z - 0.55));
     return BLOCKS[b].sound;
   }
 
@@ -449,7 +455,10 @@ export class Player {
       if (rmbHit && this.target) this.analyze(this.target);
     }
     if (tool === 'flashlight' && lmbHit) this.toggleFlashlight();
-    if (blockId !== null && lmbHit && this.target && phys) this.placeBlock(held!, blockId);
+    if (blockId !== null && lmbHit && this.target && phys) {
+      if (STRUCTURE[blockId]) this.placeBlock(held!, blockId);
+      else if (g.fillTerrain(this.target, held!, blockId)) this.buildAnim = 1;
+    }
     if (machineType) {
       if (rmbHit) this.rot = (this.rot + 1) % 4;
       this.updateGhost(machineType);
@@ -486,17 +495,34 @@ export class Player {
       return;
     }
     const tierSpeed = g.vitals.upgrades.extractorMk2 ? 2.1 : 1;
-    this.mineProgress += (dt * tierSpeed) / Math.max(0.15, def.hardness);
     if (Math.random() < dt * 14) g.audio.miningTick();
     // sparks at hit point
     const col = this.blockColor(t.block);
-    const n = this.game.universe.focus!.physics!.gridAxisWorld(t.axis).clone().normalize().multiplyScalar(t.sign);
+    const n = t.normal;
     if (Math.random() < dt * 30) g.effects.sparksAt(t.point, n, new THREE.Color(1.6, 0.9, 0.4), 2, 3, 1, 0.04, 0.35);
     if (Math.random() < dt * 10) g.effects.sparksAt(t.point, n, col.clone().multiplyScalar(0.4), 1, 1, 0.5, 0.08, 0.6, 2);
-    if (this.mineProgress >= 1) {
-      this.mineProgress = 0;
-      g.breakBlock(t);
+    if (STRUCTURE[t.block]) {
+      // built pieces come apart one cube at a time
+      this.mineProgress += (dt * tierSpeed) / Math.max(0.15, def.hardness);
+      if (this.mineProgress >= 1) {
+        this.mineProgress = 0;
+        g.breakBlock(t);
+      }
+      return;
     }
+    // natural ground: the beam carves a smooth crater continuously
+    this.mineKey = '';
+    const rate = (dt * tierSpeed) / Math.max(0.2, def.hardness);
+    this.digAcc += rate;
+    this.sinceRemove += rate;
+    this.digTimer -= dt;
+    if (this.digTimer <= 0) {
+      this.digTimer = 0.1;
+      const removed = g.digTerrain(t, this.digAcc * 0.3);
+      this.digAcc = 0;
+      if (removed > 0) this.sinceRemove = 0;
+    }
+    this.mineProgress = Math.min(1, this.sinceRemove / 0.8);
   }
 
   blockColor(b: number): THREE.Color {
