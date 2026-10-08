@@ -14,6 +14,8 @@ export interface SuitColors {
   secondary: string;
   accent: string;
   visor: string;
+  helmet?: number;
+  pack?: number;
 }
 
 export const DEFAULT_SUIT: SuitColors = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#16130e' };
@@ -185,28 +187,55 @@ export class Astronaut {
       lights.push(l);
     }
 
+    const packB = group(0, 0.36, -0.27);
+    packB.visible = false;
+    torso.add(packB);
+    packB.add(mesh(box(0.5, 0.62, 0.22, 0.05), primary, 0, 0, 0));
+    for (const tx of [-0.16, 0.16]) {
+      packB.add(mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.66, 16), secondary, tx, 0.02, -0.15));
+      packB.add(mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.05, 16), accent, tx, 0.3, -0.15));
+    }
+    packB.add(mesh(box(0.3, 0.12, 0.08, 0.02), secondary, 0, -0.33, -0.08));
+    packB.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.4, 6), secondary, 0.2, 0.5, -0.05));
+    const lb = mesh(box(0.05, 0.05, 0.02, 0.01), light, 0, 0.22, -0.12);
+    packB.add(lb);
+    lights.push(lb);
+
     // ----- head / helmet
     const head = group(0, 0.68, 0);
     torso.add(head);
-    const helmet = mesh(box(0.54, 0.52, 0.54, 0.08, 3), primary, 0, 0.27, 0);
-    head.add(helmet);
     const skull = mesh(box(0.44, 0.44, 0.44, 0.03), skin, 0, 0.27, 0);
     head.add(skull);
+    // helmet A: classic rounded cube with flat visor
+    const helmetA = group();
+    head.add(helmetA);
+    const helmet = mesh(box(0.54, 0.52, 0.54, 0.08, 3), primary, 0, 0.27, 0);
+    helmetA.add(helmet);
     const visorMesh = mesh(box(0.44, 0.3, 0.04, 0.02), visor, 0, 0.29, 0.258);
-    head.add(visorMesh);
-    // visor frame + accent
-    head.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.455, 0.255));
-    head.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.125, 0.255));
-    head.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, -0.27, 0.27, 0));
-    head.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, 0.27, 0.27, 0));
-    head.add(mesh(box(0.556, 0.03, 0.2, 0.01), accent, 0, 0.53, -0.1));
+    helmetA.add(visorMesh);
+    helmetA.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.455, 0.255));
+    helmetA.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.125, 0.255));
+    helmetA.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, -0.27, 0.27, 0));
+    helmetA.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, 0.27, 0.27, 0));
+    helmetA.add(mesh(box(0.556, 0.03, 0.2, 0.01), accent, 0, 0.53, -0.1));
     for (const lx of [-0.29, 0.29]) {
       const l = mesh(box(0.03, 0.05, 0.08, 0.01), light, lx, 0.3, 0.18);
-      head.add(l);
+      helmetA.add(l);
       lights.push(l);
     }
-    // antenna
-    head.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 6), secondary, -0.2, 0.62, -0.15));
+    helmetA.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 6), secondary, -0.2, 0.62, -0.15));
+    // helmet B: expedition helmet with wraparound visor, crest and lamp bar
+    const helmetB = group();
+    helmetB.visible = false;
+    head.add(helmetB);
+    helmetB.add(mesh(box(0.56, 0.54, 0.56, 0.1, 3), primary, 0, 0.28, 0));
+    helmetB.add(mesh(box(0.5, 0.26, 0.5, 0.06), visor, 0, 0.3, 0.05));
+    helmetB.add(mesh(box(0.12, 0.08, 0.5, 0.03), secondary, 0, 0.58, -0.02));
+    helmetB.add(mesh(box(0.58, 0.05, 0.3, 0.02), accent, 0, 0.15, -0.14));
+    const bar = mesh(box(0.3, 0.04, 0.04, 0.01), light, 0, 0.5, 0.27);
+    helmetB.add(bar);
+    lights.push(bar);
+    helmetB.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 6), secondary, 0.22, 0.66, -0.18));
 
     // ----- arms
     const makeArm = (side: number) => {
@@ -248,6 +277,17 @@ export class Astronaut {
       root, hips, torso, head, armL: aL.shoulder, armR: aR.shoulder, elbowL: aL.elbow, elbowR: aR.elbow,
       legL: lL.hip, legR: lR.hip, kneeL: lL.knee, kneeR: lR.knee, handR: aR.hand, helmet, visor: visorMesh, backpack, lights,
     };
+    this.variants = { helmetA, helmetB, packA: backpack, packB };
+  }
+
+  private variants!: { helmetA: THREE.Group; helmetB: THREE.Group; packA: THREE.Group; packB: THREE.Group };
+
+  /** Equipment variants sharing the same rig. */
+  setVariant(helmet: number, pack: number): void {
+    this.variants.helmetA.visible = helmet === 0;
+    this.variants.helmetB.visible = helmet === 1;
+    this.variants.packA.visible = pack === 0;
+    this.variants.packB.visible = pack === 1;
   }
 
   setColors(c: SuitColors): void {
@@ -255,6 +295,7 @@ export class Astronaut {
     this.mats.secondary.color.set(c.secondary);
     this.mats.accent.color.set(c.accent);
     this.mats.visor.color.set(c.visor);
+    this.setVariant(c.helmet ?? 0, c.pack ?? 0);
   }
 
   setLightsOn(on: boolean): void {

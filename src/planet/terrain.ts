@@ -268,6 +268,7 @@ export class TerrainGenerator {
       case 'exotic':
         if (underwater) { surface = pal.seabed; }
         else if (steep) { surface = pal.steep; sub = pal.rock; subDepth = 1; }
+        else if (temp < -35) { surface = B.SNOW; }
         else if (moist < 0.3) { surface = pal.dry; }
         break;
       default:

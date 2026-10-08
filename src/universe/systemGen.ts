@@ -124,7 +124,13 @@ function makeBody(sys: { star: StarDef; seed: number; name: string }, rng: Rng, 
   const au = parent ? parent.orbit.radius / AU_GAME : spec.au!;
   const orbitRadius = parent ? spec.orbitRadius! : au * AU_GAME;
   const eq = equilibriumTempC(star.luminosity, au);
-  const type = spec.type;
+  let type = spec.type;
+  // climate coherence: liquid-water worlds must sit in a liquid-water temperature range
+  if (spec.temperature === undefined && (type === 'terrestrial' || type === 'ocean')) {
+    const est = surfaceTemp(type, eq, 1);
+    if (est < -15) type = 'frozen';
+    else if (est > 70) type = 'desert';
+  }
   const atmosphere = buildAtmosphere(type, spec.radius, rng);
   if (atmosphere && spec.breathable !== undefined) atmosphere.breathable = spec.breathable;
   const temperature = spec.temperature ?? surfaceTemp(type, eq, atmosphere?.pressure ?? 0);
@@ -242,7 +248,7 @@ function generateStartSystem(summary: StarSummary): StarSystemDef {
   bodies.push(startMoon);
   const iceMoon = makeBody(sys, rng.fork(301), 'p2-b', 'Velune', 'moon', giant, { type: 'frozen', radius: 1800, orbitRadius: giant.radius * 5.6, gravity: 3.1 }, 301);
   bodies.push(iceMoon);
-  const ocean = P(3, { type: 'ocean', radius: 4200, au: 1.5 }, 'Maris');
+  const ocean = P(3, { type: 'ocean', radius: 4200, au: 1.5, temperature: 9 }, 'Maris');
   void ocean;
   P(4, { type: 'frozen', radius: 3300, au: 2.6 }, 'Glacia');
   const outer = P(5, { type: 'exotic', radius: 3100, au: 3.9 }, 'Nyxara');

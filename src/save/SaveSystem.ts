@@ -30,7 +30,7 @@ export interface SaveDoc {
   names: Record<string, string>;
   visitedSystems: string[];
   machines: unknown[];
-  suit: { primary: string; secondary: string; accent: string; visor: string };
+  suit: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number };
   stats: Record<string, number>;
   navTarget: string | null;
   jumpTarget: string | null;

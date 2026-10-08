@@ -642,7 +642,19 @@ export class UI {
       visor: ['#16130e', '#0a1016', '#2a1a05', '#061a12', '#20101a'],
     };
     const labels: Record<string, string> = { primary: 'Cor principal', secondary: 'Cor secundária', accent: 'Detalhes', visor: 'Visor' };
-    for (const key of Object.keys(palettes) as (keyof typeof g.suit)[]) {
+    const variant = (label: string, key: 'helmet' | 'pack', names: string[]) => {
+      side.appendChild(h('div', 'hint-line', label));
+      const seg = h('div', 'seg');
+      names.forEach((n, i) => {
+        const b = h('button', (g.suit[key] ?? 0) === i ? 'on' : '', n);
+        b.onclick = () => { g.setSuit({ ...g.suit, [key]: i }); this.renderTerminal(); };
+        seg.appendChild(b);
+      });
+      side.appendChild(seg);
+    };
+    variant('Capacete', 'helmet', ['Clássico', 'Expedição']);
+    variant('Mochila de suporte vital', 'pack', ['Padrão', 'Tanques duplos']);
+    for (const key of Object.keys(palettes) as ('primary' | 'secondary' | 'accent' | 'visor')[]) {
       side.appendChild(h('div', 'hint-line', labels[key]));
       const sw = h('div', 'swatches');
       for (const c of palettes[key]) {
@@ -653,7 +665,7 @@ export class UI {
       }
       side.appendChild(sw);
     }
-    side.appendChild(h('p', 'hint-line', 'Visualize em 3ª pessoa (V). Capacetes, mochilas e botas alternativos usam o mesmo esqueleto e chegarão em versões futuras.'));
+    side.appendChild(h('p', 'hint-line', 'Visualize em 3ª pessoa (V). Todas as variações usam o mesmo esqueleto e animações.'));
     body.appendChild(side);
   }
 

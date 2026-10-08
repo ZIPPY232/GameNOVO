@@ -261,6 +261,9 @@ export class Player {
       vh.multiplyScalar(1 - Math.min(1, dt * 1.2));
       // surface bob: float at the surface
       if (upIn === 0 && r + 1.3 > seaR) newVr += (seaR - (r + 1.3)) * dt * 3;
+      // slow ocean current drifting along a fixed planetary direction
+      const current = new THREE.Vector3(0.3, 0, 1).projectOnPlane(U).normalize().multiplyScalar(0.45 * Math.sin(g.universe.time * 0.05 + this.pos.x * 0.001) + 0.35);
+      vh.addScaledVector(current, dt * 0.8);
     } else {
       newVr -= gAcc * dt;
       if (controls && input.hit('Space') && this.grounded) {

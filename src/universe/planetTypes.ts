@@ -129,10 +129,10 @@ export function buildGenParams(type: PlanetType, seed: number, radius: number, t
       break;
     }
     case 'exotic': {
-      base.hasOcean = rng.chance(0.5);
+      base.hasOcean = rng.chance(0.5) && temperature > -10 && temperature < 90;
       base.continentBias = 0.2;
       base.moisture = rng.range(0.4, 0.8);
-      base.flora = rng.chance(0.5) ? 'fungal' : 'crystal';
+      base.flora = temperature < -45 ? 'crystal' : rng.chance(0.5) ? 'fungal' : 'crystal';
       base.floraDensity = rng.range(0.8, 1.4);
       base.terraceStep = rng.chance(0.4) ? rng.range(6, 12) : 0;
       base.bioTint = rng.pick([vec(0.62, 0.3, 0.7), vec(0.25, 0.6, 0.75), vec(0.75, 0.42, 0.3)]);

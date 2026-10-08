@@ -195,6 +195,46 @@ export class Game {
     }
   }
 
+  /** Test helper: place the player (and ship) on land on a body at a given local time offset. */
+  async debugLand(bodyId: string, sunElevation = 0.5): Promise<void> {
+    const u = this.universe;
+    const body = u.system.body(bodyId);
+    if (!body || !body.def.gen) return;
+    this.mode = 'boot';
+    const gen = new TerrainGenerator(body.def.gen);
+    // find dry, gentle land facing the sun at the requested elevation
+    u.system.update(u.time);
+    const sunL = u.system.posFromSystem(body, new THREE.Vector3(), new THREE.Vector3()).normalize();
+    let best = sunL.clone(), bestS = -1e9;
+    for (let i = 0; i < 400; i++) {
+      const d = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      const h = gen.heightAt(d.x, d.y, d.z);
+      if (h < 3) continue;
+      const sc = -Math.abs(d.dot(sunL) - sunElevation) * 10 - Math.abs(h - 25) * 0.02;
+      if (sc > bestS) { bestS = sc; best = d; }
+    }
+    u.frame = body;
+    u.updateFocus(body.pos);
+    const f = u.focus!;
+    const r = f.surfaceRadius(best);
+    const t = new THREE.Vector3(0, 1, 0).cross(best).normalize();
+    this.player.placeAt(best.clone().multiplyScalar(r + 0.1), t);
+    const ship = this.pilot.ship;
+    const sd = best.clone().addScaledVector(t, 16 / r).normalize();
+    ship.pos.copy(sd).multiplyScalar(f.surfaceRadius(sd) + 2.06);
+    ship.quat.setFromRotationMatrix(new THREE.Matrix4().makeBasis(t.clone().cross(sd).normalize().negate(), sd, t.clone()));
+    ship.vel.set(0, 0, 0);
+    ship.landed = true;
+    await this.waitForTerrain(this.player.pos, () => {});
+    this.seatOnGround(this.player.pos);
+    this.machines.attach(f.voxels, f.physics);
+    this.mode = 'onfoot';
+    this.player.visible = true;
+    this.hud.showShip(false);
+    this.hud.showFoot(true);
+    this.enterSoi(body);
+  }
+
   showFps(on: boolean): void {
     if (on && !this.fpsEl) {
       this.fpsEl = document.createElement('div');
@@ -502,7 +542,7 @@ export class Game {
     return true;
   }
 
-  suit = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#16130e' };
+  suit: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number } = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#16130e', helmet: 0, pack: 0 };
 
   async saveGame(silent = false): Promise<void> {
     if (this.mode !== 'onfoot' && this.mode !== 'ship') return;
@@ -1005,6 +1045,7 @@ export class Game {
 
   enterShip(): void {
     const s = this.pilot.ship;
+    this.renderer.fx.fade = 0.9;
     this.mode = 'ship';
     this.player.visible = false;
     this.player.mining = false;
@@ -1022,6 +1063,7 @@ export class Game {
   exitShip(): void {
     const s = this.pilot.ship;
     const frame = this.universe.frame;
+    this.renderer.fx.fade = 0.9;
     this.mode = 'onfoot';
     const hatch = s.localToFrame(ShipModel.HATCH.clone().add(new THREE.Vector3(-0.8, 0, 0)));
     this.player.visible = true;
@@ -1318,7 +1360,7 @@ export class Game {
     const low = this.vitals.oxygen <= 0 ? 0.6 + Math.sin(this.universe.time * 4) * 0.2 : this.vitals.health < 25 ? 0.35 : 0;
     fx.damage += (low - fx.damage) * Math.min(1, dt * 3);
     if (this.mode !== 'warp') { fx.warp = 0; fx.chroma = this.mode === 'ship' ? ship.heat * 0.4 : 0; }
-    if (this.mode !== 'dead') fx.fade = Math.max(0, fx.fade - dt);
+    if (this.mode !== 'dead') fx.fade = Math.max(0, fx.fade - dt * 2.2);
     fx.saturation = this.player.underwater ? 0.8 : 1.05;
   }
 
@@ -1453,7 +1495,7 @@ export class Game {
     this.showFps(this.settings.showFps);
   }
 
-  setSuit(c: { primary: string; secondary: string; accent: string; visor: string }): void {
+  setSuit(c: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number }): void {
     this.suit = { ...c };
     this.player.model.setColors(c);
   }
