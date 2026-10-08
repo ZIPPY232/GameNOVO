@@ -27,6 +27,9 @@ import { CHUNK_VOL, TerrainGenerator, type POI } from '../planet/terrain';
 import { gridToPos } from '../planet/cubesphere';
 import type { TextureSet } from '../render/textureGen';
 import { Fauna } from './Fauna';
+import { FloraSystem, type FloraHit } from './Flora';
+import { FLORA_INFO, FK, CRYSTAL_DROP } from '../planet/flora';
+import { createSmoothTerrainMaterial } from '../render/TerrainMaterial';
 import type { UI } from '../ui/UI';
 import { GrassField } from '../render/Grass';
 
@@ -49,6 +52,7 @@ export class Game {
   player!: Player;
   pilot!: Pilot;
   fauna!: Fauna;
+  flora!: FloraSystem;
   readonly vitals = new Vitals();
   readonly inventory = new Inventory(36);
   readonly machines = new MachineSystem();
@@ -135,7 +139,7 @@ export class Game {
     await this.save.open();
     this.universe.editLoader = (key) => {
       const [systemId, bodyId] = key.split(':');
-      return this.save.loadChunks(SLOT, systemId, bodyId, CHUNK_VOL);
+      return this.save.loadChunks(SLOT, systemId, bodyId, CHUNK_VOL * 2);
     };
     progress(0.15, 'Sintetizando materiais PBR (rocha, gelo, metais, cristais)…');
     const res = await this.universe.pool.run({ type: 'textures', size: this.settings.graphics.textureSize }, -1000);
@@ -147,6 +151,7 @@ export class Game {
     this.player = new Player(this);
     this.pilot = new Pilot(this);
     this.fauna = new Fauna(this);
+    this.flora = new FloraSystem(this.universe.pool, (force) => createSmoothTerrainMaterial(this.universe.terrainUniforms, force));
     progress(0.6, 'Compilando shaders…');
     this.setupMenuScene();
     // warm up: run a few frames so shaders compile and LOD roots stream in
@@ -335,6 +340,7 @@ export class Game {
     this.jumpTarget = null;
     this.knownPois.clear();
     this.lootedPois.clear();
+    this.flora.load(undefined);
     this.campaign.load({});
     this.vitals.load({ health: 100, oxygen: 100, energy: 85, bodyTemp: 37, integrity: 78, radiation: 0, food: 80, water: 70, fullSurvival, explorer, upgrades: {} });
     this.inventory.load([]);
@@ -525,6 +531,7 @@ export class Game {
     this.jumpTarget = doc.jumpTarget ?? null;
     this.knownPois = new Set(doc.pois ?? []);
     this.lootedPois = new Set(doc.looted ?? []);
+    this.flora.load(doc.floraRemoved);
     this.player.model.setColors(doc.suit);
     this.suit = { ...doc.suit };
     const p = doc.player;
@@ -568,7 +575,7 @@ export class Game {
       vitals: this.vitals.serialize(), inventory: this.inventory.serialize(), hotbarIndex: this.hotbar, ship: this.pilot.ship.serialize(),
       shipFrameBodyId: u.frame?.id ?? null, campaign: this.campaign.serialize(), discoveries: this.discoveries, names: this.names,
       visitedSystems: this.visitedSystems, machines: this.machines.allData, suit: this.suit, stats: this.stats, navTarget: this.navTarget, jumpTarget: this.jumpTarget,
-      pois: [...this.knownPois], looted: [...this.lootedPois],
+      pois: [...this.knownPois], looted: [...this.lootedPois], floraRemoved: this.flora.serialize(),
     };
     try {
       await this.save.saveDoc(doc);
@@ -737,6 +744,7 @@ export class Game {
     this.fauna.update(dt);
     this.updatePois(dt);
     this.updateGrass(dt);
+    this.updateFlora(dt);
 
     // ---------------------------------------------------- campaign
     this.campaign.update({
@@ -897,6 +905,7 @@ export class Game {
     const removed = w.dig(g.face, g.x, g.y, g.z, DIG_RADIUS, amount, (b) => isFinite(BLOCKS[b].hardness));
     if (!removed.length) return 0;
     this.universe.dirtyEdits.add(w.bodyId);
+    this.flora.invalidate();
     const gains = new Map<string, number>();
     for (const b of removed) {
       const def = BLOCKS[b];
@@ -1278,6 +1287,43 @@ export class Game {
     this.toast('Sistemas de emergência restauraram os sinais vitais', 'var(--amber)');
   }
 
+  private updateFlora(dt: number): void {
+    const f = this.universe.focus;
+    const vox = f?.voxels ?? null;
+    if (!f || !vox || f.body !== this.universe.frame) {
+      this.flora.setPlanet('', null, null, null);
+      this.flora.update(null, dt, this.universe.time, 0, 0);
+      return;
+    }
+    this.flora.setPlanet(f.key, vox, f.body.def.gen!, f.root);
+    // keep the landed ship, bases and ruins out of the woods
+    const zones: { p: THREE.Vector3; r: number }[] = [];
+    const s = this.pilot.ship;
+    if (s.landed || this.pilot.altitude < 40) zones.push({ p: s.pos.clone().round(), r: 11 });
+    for (const m of this.machines.machines) zones.push({ p: this.machines.worldPos(m).round(), r: 5 });
+    for (const n of this.nearPois ?? []) zones.push({ p: n.pos.clone().round(), r: 13 });
+    this.flora.setClearZones(zones);
+    const pos = this.mode === 'ship' ? this.pilot.ship.pos : this.player.pos;
+    this.flora.update(pos, dt, this.universe.time, f.weather.cur.wind, this.settings.graphics.objectDensity);
+  }
+
+  /** Extractor finished on a plant: remove it and award its material. */
+  harvestFlora(hit: FloraHit): void {
+    const { drop, count } = this.flora.harvest(hit);
+    const p = hit.point;
+    const up = p.clone().normalize();
+    this.effects.burstDebris(p, up, new THREE.Color(0.25, 0.3, 0.15), 14);
+    this.effects.sparksAt(p, up, new THREE.Color(0.3, 0.5, 0.25), 18, 2.5, 0.6, 0.12, 1.2, 2);
+    this.audio.blockBreak('organic');
+    this.stats.harvested = (this.stats.harvested ?? 0) + 1;
+    this.universe.dirtyEdits.add(this.universe.focus?.key ?? '');
+    if (drop) {
+      const left = this.inventory.add(drop, count);
+      if (left < count) { this.audio.ui('pickup'); this.toast(`+${count - left} ${item(drop).name}`); }
+      if (left > 0) this.toast('Inventário cheio', 'var(--red)');
+    }
+  }
+
   private updateGrass(dt: number): void {
     const f = this.universe.focus;
     const phys = f?.physics;
@@ -1381,7 +1427,7 @@ export class Game {
   private updateTargetBox(camPos: THREE.Vector3): void {
     const t = this.mode === 'onfoot' ? this.player.target : null;
     const phys = this.universe.focus?.physics;
-    if (!t || !phys) { this.effects.setTargetBox(null, 0); this.effects.setTargetRing(null, null, 1, 0); return; }
+    if (!t || !phys || this.player.floraTarget) { this.effects.setTargetBox(null, 0); this.effects.setTargetRing(null, null, 1, 0); return; }
     if (STRUCTURE[t.block] || this.player.targetMachine) {
       // built cubes: box outline (corners are planet-local == frame-local on a planet)
       const corners = phys.cellCorners(t.face, t.I, t.J, t.K, 0.004);
@@ -1525,6 +1571,10 @@ export class Game {
       targetInfo = `${m.powered ? '● energizado' : '○ sem energia'} · segure ⟁ para recolher`;
     } else if (p.nearShip) {
       prompt = `<kbd>E</kbd>Entrar na nave <kbd style="margin-left:10px">R</kbd>Painel de reparos`;
+    } else if (p.floraTarget) {
+      const info = FLORA_INFO[p.floraTarget.kind];
+      const drop = p.floraTarget.kind === FK.CRYSTAL ? CRYSTAL_DROP[p.floraTarget.variant % 5] : info.drop;
+      targetInfo = `${info.name}${drop ? ' · rende ' + item(drop).name : ''}`;
     } else if (t) {
       targetInfo = BLOCKS[t.block].name;
     }

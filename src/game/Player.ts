@@ -8,6 +8,8 @@ import { buildMachineModel, machineHeight, type Machine } from '../building/Mach
 import type { RayHit, GridPos } from '../physics/VoxelPhysics';
 import { canonicalCell } from '../planet/cubesphere';
 import { STRUCTURE } from '../planet/terrain';
+import { FLORA_INFO } from '../planet/flora';
+import type { FloraHit } from './Flora';
 import { ShipModel } from '../ship/ShipModel';
 import type { Game } from './Game';
 
@@ -57,6 +59,9 @@ export class Player {
   mineProgress = 0;
   private mineKey = '';
   private digAcc = 0;
+  /** plant under the crosshair (harvestable with the extractor) */
+  floraTarget: FloraHit | null = null;
+  private floraKey = '';
   private digTimer = 0;
   private sinceRemove = 0;
   mining = false;
@@ -304,6 +309,7 @@ export class Player {
         this.vel.addScaledVector(U, -Math.min(0, this.vel.dot(U)));
       }
       const res = phys.move(this.pos, this.vel, this.vel.clone().multiplyScalar(dt), HALF_W, HEIGHT, g.settings.controls.autoStep, this.grounded);
+      g.flora.collide(this.pos, this.vel, HALF_W);
       this.grounded = res.grounded || (this.vel.dot(this.pos.clone().normalize()) <= 0.01 && phys.groundBelow(this.pos, HALF_W));
       if (res.stepped > 0) this.stepSmooth -= res.stepped;
     } else {
@@ -436,6 +442,9 @@ export class Player {
     this.mining = false;
     const blockId = held ? placeableBlock(held) : null;
     const machineType = held ? item(held).machine ?? null : null;
+    // plants in front of the terrain hit can be harvested
+    const fl = tool === 'extractor' && phys ? g.flora.raycast(this.camPos, this.lookDir, reach) : null;
+    this.floraTarget = fl && (!this.target || fl.dist < this.target.dist) ? fl : null;
     // creatures in the line of fire take priority over terrain
     const creature = tool === 'extractor' && lmb ? g.fauna.raycast(this.camPos, this.lookDir, reach) : null;
     this.creatureHit = creature && (!this.target || creature.dist < this.target.dist) ? this.camPos.clone().addScaledVector(this.lookDir, creature.dist) : null;
@@ -443,6 +452,9 @@ export class Player {
       g.fauna.hurt(creature.c, 22 * dt);
       this.mining = true;
       if (Math.random() < dt * 20) g.effects.sparksAt(this.creatureHit, this.lookDir.clone().negate(), new THREE.Color(1.6, 0.7, 0.3), 2, 3, 1, 0.05, 0.3);
+    } else if (tool === 'extractor' && this.floraTarget) {
+      if (lmb && g.vitals.energy > 0) this.harvest(dt, this.floraTarget);
+      else this.mineProgress = Math.max(0, this.mineProgress - dt * 2);
     } else if (tool === 'extractor') {
       if (lmb && this.target && g.vitals.energy > 0) this.mine(dt);
       else { this.mineProgress = Math.max(0, this.mineProgress - dt * 2); }
@@ -523,6 +535,25 @@ export class Player {
       if (removed > 0) this.sinceRemove = 0;
     }
     this.mineProgress = Math.min(1, this.sinceRemove / 0.8);
+  }
+
+  private harvest(dt: number, f: FloraHit): void {
+    const g = this.game;
+    const key = f.col + '#' + f.index;
+    if (key !== this.floraKey) { this.floraKey = key; this.mineProgress = 0; }
+    this.mining = true;
+    const info = FLORA_INFO[f.kind];
+    const tierSpeed = g.vitals.upgrades.extractorMk2 ? 2.1 : 1;
+    this.mineProgress += (dt * tierSpeed) / info.hardness;
+    if (Math.random() < dt * 12) g.audio.miningTick();
+    const n = this.lookDir.clone().negate();
+    if (Math.random() < dt * 25) g.effects.sparksAt(f.point, n, new THREE.Color(1.4, 0.9, 0.4), 2, 2.5, 1, 0.04, 0.3);
+    if (Math.random() < dt * 12) g.effects.sparksAt(f.point, n, new THREE.Color(0.2, 0.3, 0.12), 1, 1.2, 0.8, 0.07, 0.8, 2);
+    if (this.mineProgress >= 1) {
+      this.mineProgress = 0;
+      this.floraKey = '';
+      g.harvestFlora(f);
+    }
   }
 
   blockColor(b: number): THREE.Color {
@@ -704,7 +735,7 @@ export class Player {
       vHemi.intensity = g.universe.hemi.intensity;
     }
     // mining beam
-    const beamTo = this.creatureHit ?? (this.target && !this.targetMachine ? this.target.point : null);
+    const beamTo = this.creatureHit ?? this.floraTarget?.point ?? (this.target && !this.targetMachine ? this.target.point : null);
     if (this.mining && beamTo) {
       const tip = new THREE.Vector3();
       if (fp) {

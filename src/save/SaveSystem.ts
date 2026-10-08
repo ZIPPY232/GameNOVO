@@ -36,6 +36,8 @@ export interface SaveDoc {
   jumpTarget: string | null;
   pois?: string[];
   looted?: string[];
+  /** harvested plants per body key */
+  floraRemoved?: Record<string, string[]>;
 }
 
 export interface DiscoveryEntry {
@@ -60,8 +62,11 @@ export function rleEncode(data: Uint8Array): Uint8Array {
   return Uint8Array.from(out);
 }
 
+/** Decodes to the encoded length (old blocks-only chunks decode shorter than `size`). */
 export function rleDecode(rle: Uint8Array, size: number): Uint8Array {
-  const out = new Uint8Array(size);
+  let total = 0;
+  for (let i = 1; i < rle.length; i += 2) total += rle[i];
+  const out = new Uint8Array(Math.min(total, size));
   let o = 0;
   for (let i = 0; i < rle.length; i += 2) {
     out.fill(rle[i], o, o + rle[i + 1]);

@@ -228,10 +228,11 @@ if (uScanStrength > 0.0) {
  * materials blended per triangle (barycentric weights from gl_VertexID), slope
  * aware top/side layers, field ambient occlusion and sky exposure.
  */
-export function createSmoothTerrainMaterial(uniforms: TerrainUniforms): THREE.MeshStandardMaterial {
+export function createSmoothTerrainMaterial(uniforms: TerrainUniforms, forceMat: THREE.IUniform<number> | null = null): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, envMapIntensity: 1 });
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
+    shader.uniforms.uForceMat = forceMat ?? { value: -1 };
     shader.defines = shader.defines ?? {};
     shader.defines.LAYER_COUNT = LAYER_COUNT;
     shader.vertexShader = shader.vertexShader
@@ -250,10 +251,15 @@ int vid = gl_VertexID % 3;
 vBary = vec3(vid == 0 ? 1.0 : 0.0, vid == 1 ? 1.0 : 0.0, vid == 2 ? 1.0 : 0.0);
 vMats = aMats.xyz;
 vAoSky = aData.xy / 255.0;
+#ifdef USE_INSTANCING
+vec4 wp4 = modelMatrix * instanceMatrix * vec4(position, 1.0);
+vPlanetNormal = normalize(mat3(instanceMatrix) * normal);
+#else
 vec4 wp4 = modelMatrix * vec4(position, 1.0);
+vPlanetNormal = normal;
+#endif
 vRenderPos = wp4.xyz;
-vPlanetPos = (uRenderToPlanet * wp4).xyz;
-vPlanetNormal = normal;`);
+vPlanetPos = (uRenderToPlanet * wp4).xyz;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 precision highp sampler2DArray;
@@ -272,6 +278,7 @@ uniform float uScanStrength;
 uniform float uTime;
 uniform float uSkyAmbient;
 uniform float uTexScale;
+uniform float uForceMat;
 uniform mat4 uRenderToPlanet;
 flat varying vec3 vMats;
 varying vec3 vBary;
@@ -279,7 +286,7 @@ varying vec2 vAoSky;
 varying vec3 vPlanetPos;
 varying vec3 vPlanetNormal;
 varying vec3 vRenderPos;
-vec3 gNP; float gRough; float gMetal; vec3 gEmit; float gWet; float gOre;
+vec3 gNP; float gRough; float gMetal; vec3 gEmit; float gWet; float gOre; vec2 gAoSky;
 vec3 gTW; vec3 gP;
 
 // triplanar sample of one layer: albedo (rgb + tint mask) and material (normal xy, rough, emissive)
@@ -334,6 +341,9 @@ void blockSample(float id, float slopeK, out vec3 col, out vec4 mat, out vec3 nr
   // barycentric material weights, sharpened so blends stay narrow and natural
   vec3 w = pow(vBary, vec3(2.2));
   float m0 = vMats.x, m1 = vMats.y, m2 = vMats.z;
+  vec2 aoSky = vAoSky;
+  if (uForceMat >= 0.0) { m0 = m1 = m2 = uForceMat; aoSky = vec2(1.0); }
+  gAoSky = aoSky;
   if (m1 == m0) { w.x += w.y; w.y = 0.0; }
   if (m2 == m0) { w.x += w.z; w.z = 0.0; } else if (m2 == m1) { w.y += w.z; w.z = 0.0; }
   w /= w.x + w.y + w.z;
@@ -375,16 +385,16 @@ if (uScanStrength > 0.0) {
 }`)
       .replace('#include <aomap_fragment>', `
 {
-  float vao = clamp(vAoSky.x, 0.0, 1.0);
+  float vao = clamp(gAoSky.x, 0.0, 1.0);
   vao = vao * vao * (3.0 - 2.0 * vao);
-  float sky = clamp(vAoSky.y, 0.0, 1.0);
+  float sky = clamp(gAoSky.y, 0.0, 1.0);
   float skyAmb = mix(uSkyAmbient, 1.0, sky * sky);
   reflectedLight.indirectDiffuse *= vao * skyAmb;
   reflectedLight.indirectSpecular *= vao * skyAmb;
   reflectedLight.directDiffuse *= mix(0.75, 1.0, vao);
 }`);
   };
-  mat.customProgramCacheKey = () => 'terrain-smooth';
+  mat.customProgramCacheKey = () => (forceMat ? 'terrain-smooth-forced' : 'terrain-smooth');
   return mat;
 }
 

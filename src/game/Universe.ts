@@ -55,7 +55,7 @@ export class FocusPlanet {
     const p = this.body.def.gen!;
     const h = this.gen.heightAt(dir.x, dir.y, dir.z);
     const hh = (p.frozenOcean || p.lavaOcean) && h < 0 ? 0 : h;
-    return p.baseRadius + Math.floor(p.seaZ + hh) + 1;
+    return p.baseRadius + p.seaZ + hh;
   }
 
   dispose(): void {

@@ -108,6 +108,11 @@ export class VoxelWorld {
     s.add(cz);
   }
 
+  /** Has the player edited any chunk in this chunk column? */
+  columnEdited(face: number, cx: number, cy: number): boolean {
+    return this.editCols.has(face + ',' + cx + ',' + cy);
+  }
+
   // ------------------------------------------------------------------ queries
 
   /** Block at integer cell, loaded data or edits; UNKNOWN if not available. */
@@ -268,7 +273,7 @@ export class VoxelWorld {
     const h = this.gen.heightAt(dx, dy, dz);
     const p = this.params;
     const hh = (p.frozenOcean || p.lavaOcean) && h < 0 ? 0 : h;
-    return p.baseRadius + Math.floor(p.seaZ + hh) + 1;
+    return p.baseRadius + p.seaZ + hh;
   }
 
   /** Highest solid cell in the column at or below startK (uses loaded data). */
