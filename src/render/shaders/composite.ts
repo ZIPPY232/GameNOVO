@@ -49,6 +49,7 @@ uniform float uWetness;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform int uDebug;
+uniform int uWaterQ;
 
 ${ATMOSPHERE_GLSL}
 
@@ -66,9 +67,10 @@ vec3 waveNormal(vec3 pLocal, vec3 n, float dist) {
   vec3 tw = vec3(uTime * 0.021, uTime * 0.013, -uTime * 0.017);
   float e = 0.06;
   vec3 g = vec3(0.0);
-  for (int o = 0; o < 2; o++) {
-    float s = o == 0 ? 1.0 : 3.3;
-    vec3 qq = q * s + tw * (o == 0 ? 1.0 : 1.7);
+  for (int o = 0; o < 3; o++) {
+    if (o > uWaterQ) break;
+    float s = o == 0 ? 1.0 : o == 1 ? 3.3 : 9.7;
+    vec3 qq = q * s + tw * (o == 0 ? 1.0 : o == 1 ? 1.7 : 2.6);
     float c = texture(tNoise, qq).r;
     g += vec3(texture(tNoise, qq + vec3(e, 0, 0)).r - c, texture(tNoise, qq + vec3(0, e, 0)).r - c, texture(tNoise, qq + vec3(0, 0, e)).r - c) / (e * s);
   }
@@ -123,7 +125,7 @@ void main() {
       vec3 rr = reflect(rd, n);
       rr = normalize(rr + n0 * max(0.0, -dot(rr, n0)) * 1.05);
       vec3 Tr;
-      vec3 sky = uHasAtmo == 1 ? scatter(hit + n0 * 0.5, rr, 1e12, 6, 2, Tr) : vec3(0.0);
+      vec3 sky = uHasAtmo == 0 ? vec3(0.0) : uWaterQ == 0 ? uAmbient * 1.4 : scatter(hit + n0 * 0.5, rr, 1e12, uWaterQ == 2 ? 6 : 4, uWaterQ == 2 ? 2 : 1, Tr);
       float rough = 0.02 + clamp(t / 6000.0, 0.0, 0.25);
       float spec = pow(max(dot(rr, uSunDir), 0.0), 1.0 / (rough * rough * 0.08 + 0.0004));
       vec3 sunT;
@@ -135,7 +137,7 @@ void main() {
       float fres = 0.02 + 0.98 * pow(1.0 - cosI, 5.0);
       vec3 waterC = mix(under, sky + uAmbient * 0.05, fres) + specC;
       // shoreline foam
-      float foam = (1.0 - smoothstep(0.0, 1.4, thick)) * (0.55 + 0.45 * texture(tNoise, hl * 0.25 + uTime * 0.02).r) * (1.0 - smoothstep(300.0, 1500.0, t));
+      float foam = (uWaterQ == 0 ? 0.0 : 1.0) * (1.0 - smoothstep(0.0, 1.4, thick)) * (0.55 + 0.45 * texture(tNoise, hl * 0.25 + uTime * 0.02).r) * (1.0 - smoothstep(300.0, 1500.0, t));
       vec3 foamC = (uSunColor * 0.012 * max(dot(n0, uSunDir), 0.0) + uAmbient * 0.7) * foam;
       col = waterC + foamC;
       tScene = t;

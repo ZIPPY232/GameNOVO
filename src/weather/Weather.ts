@@ -146,6 +146,8 @@ export class WeatherParticles {
   private dotPos: Float32Array;
   private seeds: Float32Array;
   private readonly N = 2400;
+  /** particle budget scale from settings (0..1) */
+  quality = 1;
   private readonly box = 26;
   private dotMat: THREE.PointsMaterial;
   private rainMat: THREE.LineBasicMaterial;
@@ -177,7 +179,7 @@ export class WeatherParticles {
     this.object.visible = active;
     if (!active) return;
     const B = this.box;
-    const n = Math.floor(this.N * Math.min(1, density));
+    const n = Math.floor(this.N * Math.min(1, density) * this.quality);
     const side = new THREE.Vector3().crossVectors(up, windDir).normalize();
     const fwd = new THREE.Vector3().crossVectors(side, up).normalize();
     let fall = 9, swirl = 0.2, len = 0.6;

@@ -34,6 +34,8 @@ void main() {
 }`;
 
 export class Effects {
+  /** particle count scale from settings */
+  quality = 1;
   readonly group = new THREE.Group();
   private debris: Debris[] = [];
   private sparks: Spark[] = [];
@@ -173,6 +175,7 @@ void main(){
   }
 
   burstDebris(center: THREE.Vector3, up: THREE.Vector3, color: THREE.Color, count: number): void {
+    count = Math.max(1, Math.round(count * this.quality));
     for (let i = 0; i < count; i++) {
       if (this.debris.length >= this.MAXD) this.debris.shift();
       const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(4).addScaledVector(up, 2 + Math.random() * 3);
@@ -186,6 +189,7 @@ void main(){
   }
 
   sparksAt(p: THREE.Vector3, normal: THREE.Vector3, color: THREE.Color, count: number, speed = 3, grav = 1, size = 0.05, life = 0.5, drag = 1.5): void {
+    count = Math.max(1, Math.round(count * this.quality));
     for (let i = 0; i < count; i++) {
       if (this.sparks.length >= this.MAXS) this.sparks.shift();
       const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(speed).addScaledVector(normal, speed * 0.6 * Math.random());

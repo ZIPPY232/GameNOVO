@@ -210,7 +210,7 @@ export class Renderer {
       uSeaR: { value: 1 }, uWaterDeep: { value: new THREE.Vector3() }, uWaterScatter: { value: new THREE.Vector3() }, uWaterAbsorb: { value: new THREE.Vector3() },
       uTime: { value: 0 }, uCloudR: { value: 1 }, uCloudCover: { value: 0 }, uCloudColor: { value: new THREE.Vector3(1, 1, 1) }, uCloudScale: { value: 1 },
       uWind: { value: new THREE.Vector3() }, uAmbient: { value: new THREE.Vector3() }, uSteps: { value: 12 }, uLSteps: { value: 4 },
-      uWetness: { value: 0 }, uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0 }, uDebug: { value: 0 },
+      uWetness: { value: 0 }, uFogColor: { value: new THREE.Vector3() }, uFogDensity: { value: 0 }, uDebug: { value: 0 }, uWaterQ: { value: 2 },
       uRg: { value: 1 }, uRa: { value: 1 }, uBetaR: { value: new THREE.Vector3() }, uBetaM: { value: 0 }, uHR: { value: 1 }, uHM: { value: 1 },
       uMieG: { value: 0.76 }, uMieColor: { value: new THREE.Vector3(1, 1, 1) }, uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunColor: { value: new THREE.Vector3(1, 1, 1) },
     });
@@ -335,6 +335,7 @@ export class Renderer {
     const aq = this.settings.atmosphereQuality;
     u.uSteps.value = [6, 10, 14, 20][aq] ?? 12;
     u.uLSteps.value = [2, 3, 4, 6][aq] ?? 4;
+    u.uWaterQ.value = this.settings.water ?? 2;
     const p = this.planet;
     if (p) {
       u.uHasAtmo.value = p.hasAtmo ? 1 : 0;

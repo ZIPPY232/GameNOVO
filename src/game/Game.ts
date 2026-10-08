@@ -1492,6 +1492,9 @@ export class Game {
     this.renderer.applySettings(this.settings.graphics);
     this.universe.settings = this.settings.graphics;
     this.universe.applyShadowSettings();
+    const pq = [0.35, 0.7, 1][this.settings.graphics.particles] ?? 1;
+    this.effects.quality = pq;
+    this.weatherFx.quality = pq;
     this.audio.setVolumes(this.settings.audio);
     this.showFps(this.settings.showFps);
   }
