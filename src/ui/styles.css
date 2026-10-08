@@ -124,7 +124,7 @@ button { font-family: var(--font); }
 .slot img { width: 40px; height: 40px; image-rendering: auto; pointer-events: none; }
 .toolname { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); font-size: 14px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; transition: opacity 0.4s; }
 
-.feed { position: absolute; right: 22px; bottom: 120px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.feed { position: absolute; right: 22px; bottom: 120px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
 .feed div { padding: 6px 12px; font-size: 14px; font-weight: 600; animation: feedin 0.35s var(--ease); }
 .feed div.out { opacity: 0; transform: translateX(20px); transition: all 0.5s; }
 @keyframes feedin { from { opacity: 0; transform: translateX(20px); } }
