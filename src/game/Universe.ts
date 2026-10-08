@@ -18,6 +18,8 @@ import { atmoFromDef, transmittance, skyRadiance, skyEquirect, type AtmoCPU } fr
 import type { BakeResult } from '../planet/tilegen';
 import type { GraphicsSettings } from '../core/settings';
 import { AU_GAME } from '../universe/systemGen';
+import { StationModel, AsteroidBelt } from '../render/SpaceObjects';
+import { Rng, hash32 } from '../core/rng';
 
 /**
  * Owns the loaded star system and everything rendered at astronomical scale:
@@ -101,6 +103,13 @@ export class Universe {
   private creatingVoxels = false;
   settings: GraphicsSettings;
   time = 0;
+  station: StationModel | null = null;
+  stationHost: BodyState | null = null;
+  private stationOrbit = { r: 0, period: 900, phase: 0 };
+  /** station state in system frame */
+  stationPos = new THREE.Vector3();
+  stationQuat = new THREE.Quaternion();
+  belt: AsteroidBelt | null = null;
 
   constructor(renderer: Renderer, galaxySeed: number, settings: GraphicsSettings) {
     this.renderer = renderer;
@@ -186,6 +195,44 @@ export class Universe {
       }
     }
     this.sky.setNeighbours(summary.pos, this.galaxy.starsNear(summary.pos, 90), summary.id);
+    // orbital station around a giant (or the first rocky world)
+    const rng = new Rng(hash32(this.def.seed, 4040));
+    if (this.def.hasStation) {
+      const host = this.system.bodies.find((b) => b.def.type === 'gas_giant') ?? this.system.bodies.find((b) => b.landable && b.def.kind === 'planet') ?? null;
+      if (host) {
+        this.stationHost = host;
+        this.stationOrbit = { r: host.radius * (host.def.type === 'gas_giant' ? 2.25 : 2.8), period: 1400, phase: rng.range(0, Math.PI * 2) };
+        this.station = new StationModel();
+        this.worldRoot.add(this.station.group);
+      }
+    }
+    // asteroid belt between two orbits
+    if (rng.chance(summary.isStart ? 1 : 0.55)) {
+      const planets = this.def.bodies.filter((b) => b.kind === 'planet').map((b) => b.orbit.radius).sort((a, b) => a - b);
+      const idx = Math.min(planets.length - 2, Math.max(0, Math.floor(planets.length / 2)));
+      const r = planets.length >= 2 ? (planets[idx] + planets[idx + 1]) / 2 : 2 * AU_GAME;
+      this.belt = new AsteroidBelt(this.def.seed, r, r * 0.12);
+      this.worldRoot.add(this.belt.group);
+    }
+  }
+
+  /** Station position/orientation in system frame at the current time. */
+  private updateStation(): void {
+    if (!this.station || !this.stationHost) return;
+    const o = this.stationOrbit;
+    const a = o.phase + (this.time / o.period) * Math.PI * 2;
+    const h = this.stationHost;
+    const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15);
+    this.stationPos.set(Math.cos(a) * o.r, 0, -Math.sin(a) * o.r).applyQuaternion(tilt).add(h.pos);
+    // dock faces along the orbit (prograde)
+    const prograde = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a)).applyQuaternion(tilt);
+    const up = this.stationPos.clone().sub(h.pos).normalize();
+    this.stationQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), prograde, up));
+  }
+
+  /** Dock point in system frame. */
+  stationDockSys(out = new THREE.Vector3()): THREE.Vector3 {
+    return out.copy(StationModel.DOCK).applyQuaternion(this.stationQuat).add(this.stationPos);
   }
 
   unloadSystem(): void {
@@ -194,6 +241,8 @@ export class Universe {
     for (const b of this.bodies.values()) { b.group.removeFromParent(); b.dispose(); }
     this.bodies.clear();
     this.bakes.clear();
+    if (this.station) { this.station.group.removeFromParent(); this.station = null; this.stationHost = null; }
+    if (this.belt) { this.belt.group.removeFromParent(); this.belt.dispose(); this.belt = null; }
     if (this.star) { this.star.group.removeFromParent(); this.star.dispose(); this.star = null; }
     this.frame = null;
   }
@@ -329,6 +378,20 @@ export class Universe {
       db.group.quaternion.copy(q);
       const sd = starFrame.clone().sub(pf).normalize();
       db.update(this.time, sd, this.sunIrradiance);
+    }
+    // station & belt
+    this.updateStation();
+    if (this.station) {
+      const sp = sys.posFromSystem(frame, this.stationPos, new THREE.Vector3());
+      this.station.group.position.copy(sp).sub(camPos);
+      sys.quatFromSystem(frame, this.stationQuat, this.station.group.quaternion);
+      this.station.update(this.time);
+      this.station.group.visible = sp.distanceTo(camPos) < 400000;
+    }
+    if (this.belt) {
+      this.belt.group.position.copy(starFrame).sub(camPos);
+      sys.frameRotation(null, frame, this.belt.group.quaternion);
+      this.belt.update(this.time);
     }
     // sky orientation
     sys.frameRotation(null, frame, q);

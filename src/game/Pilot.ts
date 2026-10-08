@@ -31,6 +31,11 @@ export class Pilot {
   private smokeT = 0;
   impactFlash = 0;
   lastLandedBody: string | null = null;
+  docked = false;
+  private dockPrev = new THREE.Vector3();
+  private dockVel = new THREE.Vector3();
+  private dockServiceT = -1e9;
+  dockAvailable = false;
   readonly env: ShipEnv = { gravity: new THREE.Vector3(), up: new THREE.Vector3(), density: 0, altitude: 0, surfaceDistance: 1e9 };
 
   constructor(game: Game) {
@@ -160,6 +165,8 @@ export class Pilot {
         if (this.altitude < 3 || this.env.gravity.lengthSq() < 0.01) { g.exitShip(); return; }
       }
     }
+    // station docking
+    if (this.updateDocking(dt, controls && g.mode === 'ship')) return;
     // cruise auto-disengage
     if (s.cruise) {
       const frame = g.universe.frame;
@@ -198,6 +205,54 @@ export class Pilot {
     }
     s.model.update(g.universe.time, s.throttleVis, s.gearT, s.heat, this.landingLight || (g.universe.sunElevation < 0.05 && s.gearDown && this.altitude < 200 && s.engineOn), s.damaged);
     this.updateModelTransform();
+  }
+
+  /** Returns true when docked (ship is attached to the station this frame). */
+  private updateDocking(dt: number, controls: boolean): boolean {
+    const g = this.game;
+    const u = g.universe;
+    const s = this.ship;
+    this.dockAvailable = false;
+    if (!u.station) { this.docked = false; return false; }
+    const dockF = u.system.posFromSystem(u.frame, u.stationDockSys(), new THREE.Vector3());
+    if (this.dockPrev.lengthSq() > 0 && dt > 0) this.dockVel.copy(dockF).sub(this.dockPrev).divideScalar(dt);
+    this.dockPrev.copy(dockF);
+    const qF = u.system.quatFromSystem(u.frame, u.stationQuat, new THREE.Quaternion());
+    if (this.docked) {
+      s.pos.copy(dockF);
+      s.vel.copy(this.dockVel);
+      s.quat.slerp(qF.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI)), Math.min(1, dt * 2));
+      s.cruise = false;
+      if (controls && (g.input.hit('KeyE') || g.input.down('KeyW'))) {
+        this.docked = false;
+        s.vel.addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(qF), -6);
+        g.toast('Desacoplado da estação');
+        g.audio.thrusterPuff();
+      }
+      s.model.update(u.time, 0, s.gearT, 0, false, s.damaged);
+      this.updateModelTransform();
+      return true;
+    }
+    const rel = s.vel.clone().sub(this.dockVel).length();
+    if (dockF.distanceTo(s.pos) < 60 && rel < 30) {
+      this.dockAvailable = true;
+      if (controls && g.input.hit('KeyE')) {
+        this.docked = true;
+        g.audio.landing();
+        g.hud.centerMessage('Acoplado', 'Estação orbital — serviços disponíveis', 3);
+        g.discover({ id: 'station', kind: 'structure', title: `Estação orbital (${u.def.name})`, text: 'Estação de pesquisa automatizada em órbita. Os sistemas de suporte ainda respondem: combustível, oxigênio e reparos básicos disponíveis.', time: Date.now(), systemId: u.def.id });
+        if (u.time - this.dockServiceT > 1200) {
+          this.dockServiceT = u.time;
+          s.fuel = 100;
+          s.o2Reserve = 800;
+          s.hull = Math.min(100, s.hull + 30);
+          g.vitals.refill(999, 999);
+          g.toast('Serviços da estação: combustível, O₂ e reparos', 'var(--green)');
+        } else g.toast('Reservas da estação ainda reabastecendo', 'var(--amber)');
+        return true;
+      }
+    }
+    return false;
   }
 
   private toggleEngine(): void {
@@ -461,10 +516,19 @@ export class Pilot {
         bodyMarkers.push({ x: pr.x, y: pr.y + 14, label: `${g.displayName(b.id)} ${fmtDist(pf.distanceTo(s.pos) - b.radius)}` });
       }
     }
+    if (g.universe.station) {
+      const sp = g.universe.system.posFromSystem(g.universe.frame, g.universe.stationDockSys(), new THREE.Vector3());
+      const d = sp.distanceTo(s.pos);
+      if (d < 300000) {
+        const pr = project(sp);
+        if (pr.on) bodyMarkers.push({ x: pr.x, y: pr.y + 14, label: `◇ Estação orbital ${fmtDist(d)}` });
+      }
+    }
     const frame = g.universe.frame;
     const atmTop = frame?.def.atmosphere?.height ?? 0;
     let mode = 'VOO';
     if (g.warpState) mode = g.warpState;
+    else if (this.docked) mode = 'ACOPLADO';
     else if (s.landed) mode = s.engineOn ? 'POUSADO · MOTORES ATIVOS' : 'POUSADO';
     else if (s.cruise) mode = 'MOTOR DE CRUZEIRO';
     else if (!frame) mode = 'ESPAÇO INTERPLANETÁRIO';
@@ -479,6 +543,8 @@ export class Pilot {
       const color = gearOk && slow && upOk ? 'var(--green)' : 'var(--amber)';
       landing = `<span style="color:${color}">POUSO ${gearOk ? '▣ TREM' : '□ TREM (X)'} · ${slow ? 'V/S OK' : 'DESCIDA RÁPIDA'} · ${upOk ? 'NIVELADA' : 'INCLINADA'}</span>`;
     }
+    if (this.docked) landing = '<span style="color:var(--green)">ACOPLADO · E ou W para desacoplar</span>';
+    else if (this.dockAvailable) landing = '<span style="color:var(--cyan)"><span class="key">E</span>ACOPLAR À ESTAÇÃO</span>';
     const warnings: string[] = [];
     if (s.fuel < 10) warnings.push('COMBUSTÍVEL BAIXO');
     if (s.hull < 30) warnings.push('CASCO CRÍTICO');

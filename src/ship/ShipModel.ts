@@ -104,11 +104,11 @@ export class ShipModel {
 
   constructor() {
     const tex = panelTextures();
-    const hull = new THREE.MeshStandardMaterial({ color: 0xe9eaec, map: tex.map, normalMap: tex.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughnessMap: tex.rough, roughness: 0.62, metalness: 0.35 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x33373d, roughness: 0.45, metalness: 0.7, normalMap: tex.normal, normalScale: new THREE.Vector2(0.4, 0.4) });
+    const hull = new THREE.MeshStandardMaterial({ color: 0xe9eaec, map: tex.map, normalMap: tex.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughnessMap: tex.rough, roughness: 0.62, metalness: 0.15 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.5, metalness: 0.3, normalMap: tex.normal, normalScale: new THREE.Vector2(0.4, 0.4) });
     const accent = new THREE.MeshStandardMaterial({ color: 0xea7a2c, roughness: 0.5, metalness: 0.1 });
     const glass = new THREE.MeshStandardMaterial({ color: 0x0b1016, roughness: 0.05, metalness: 0.95, envMapIntensity: 1.8 });
-    const engine = new THREE.MeshStandardMaterial({ color: 0x1d1f23, roughness: 0.3, metalness: 0.9 });
+    const engine = new THREE.MeshStandardMaterial({ color: 0x2c2f35, roughness: 0.35, metalness: 0.6 });
     const glow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: new THREE.Color(0.55, 0.85, 1.0), emissiveIntensity: 30 });
     const red = new THREE.MeshStandardMaterial({ color: 0, emissive: new THREE.Color(1, 0.08, 0.05), emissiveIntensity: 60 });
     const green = new THREE.MeshStandardMaterial({ color: 0, emissive: new THREE.Color(0.1, 1, 0.3), emissiveIntensity: 60 });

@@ -398,6 +398,7 @@ export class UI {
     const nearShip = g.mode === 'ship' || g.player.nearShip;
     const tabs: [string, string][] = [['inventory', 'Inventário'], ['craft', 'Fabricação'], ['build', 'Construção'], ['suit', 'Traje']];
     if (nearShip) tabs.push(['ship', 'Nave']);
+    if (g.universe.frame && g.universe.bakes.has(g.universe.frame.id)) tabs.push(['surface', 'Superfície']);
     tabs.push(['journal', 'Diário'], ['system', 'Sistema'], ['galaxy', 'Galáxia']);
     if (this.terminalTab === 'ship' && !nearShip) this.terminalTab = 'inventory';
     t.innerHTML = '';
@@ -427,6 +428,7 @@ export class UI {
       case 'journal': this.tabJournal(body); break;
       case 'system': this.tabSystem(body); break;
       case 'galaxy': this.tabGalaxy(body); break;
+      case 'surface': this.tabSurface(body); break;
     }
   }
 
@@ -812,6 +814,14 @@ export class UI {
         if (b.id === g.navTarget) { c.strokeStyle = '#5fe1ff'; c.lineWidth = 1.5; c.strokeRect(p[0] - size - 5, p[1] - size - 5, size * 2 + 10, size * 2 + 10); }
         if (b.id === this.selBody) { c.strokeStyle = '#ffb547'; c.beginPath(); c.arc(p[0], p[1], size + 7, 0, Math.PI * 2); c.stroke(); }
       }
+      if (u.station && u.stationHost && posOf.has(u.stationHost.id)) {
+        const [hx, hy] = posOf.get(u.stationHost.id)!;
+        c.strokeStyle = '#5fe1ff';
+        c.beginPath(); c.moveTo(hx + 14, hy - 10); c.lineTo(hx + 18, hy - 6); c.lineTo(hx + 14, hy - 2); c.lineTo(hx + 10, hy - 6); c.closePath(); c.stroke();
+        c.fillStyle = 'rgba(95,225,255,0.8)';
+        c.font = '11px Rajdhani, sans-serif';
+        c.fillText('Estação', hx + 21, hy - 3);
+      }
       // ship
       const shipSys = u.system.posToSystem(u.frame, g.mode === 'ship' ? g.pilot.ship.pos : g.player.pos, new THREE.Vector3());
       let sx: number, sy: number;
@@ -906,6 +916,77 @@ export class UI {
     setTimeout(() => inp.focus(), 50);
   }
 
+  // ------------------------------------------------------------------ surface map
+  private tabSurface(body: HTMLElement): void {
+    const g = this.game;
+    const u = g.universe;
+    const frame = u.frame;
+    const bake = frame ? u.bakes.get(frame.id) : undefined;
+    if (!frame || !bake) { body.appendChild(h('p', 'hint-line', 'Mapa indisponível.')); return; }
+    const canvas = document.createElement('canvas');
+    canvas.className = 'mapcanvas';
+    body.appendChild(canvas);
+    const side = h('div', 'side');
+    body.appendChild(side);
+    // equirect image from the planet bake (water rendered as deep blue)
+    const img = document.createElement('canvas');
+    img.width = bake.width; img.height = bake.height;
+    const ictx = img.getContext('2d')!;
+    const id = ictx.createImageData(bake.width, bake.height);
+    for (let i = 0; i < bake.width * bake.height; i++) {
+      const water = bake.data[i * 4 + 3] === 0;
+      const hgt = bake.data[i * 4 + 3] / 255;
+      const shade = water ? 1 : 0.75 + hgt * 0.5;
+      id.data[i * 4] = water ? 18 : Math.min(255, bake.data[i * 4] * shade);
+      id.data[i * 4 + 1] = water ? 44 : Math.min(255, bake.data[i * 4 + 1] * shade);
+      id.data[i * 4 + 2] = water ? 72 : Math.min(255, bake.data[i * 4 + 2] * shade);
+      id.data[i * 4 + 3] = 255;
+    }
+    ictx.putImageData(id, 0, 0);
+    const toLL = (p: THREE.Vector3) => {
+      const d = p.clone().normalize();
+      return [Math.atan2(-d.z, d.x), Math.asin(THREE.MathUtils.clamp(d.y, -1, 1))] as const;
+    };
+    const draw = () => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = canvas.clientWidth, H = canvas.clientHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      const c = canvas.getContext('2d')!;
+      c.scale(dpr, dpr);
+      const mw = Math.min(W, H * 2) - 20, mh = mw / 2;
+      const ox = (W - mw) / 2, oy = (H - mh) / 2;
+      c.imageSmoothingEnabled = true;
+      c.drawImage(img, ox, oy, mw, mh);
+      c.strokeStyle = 'rgba(160,220,255,0.12)';
+      for (let k = 1; k < 12; k++) { c.beginPath(); c.moveTo(ox + (mw * k) / 12, oy); c.lineTo(ox + (mw * k) / 12, oy + mh); c.stroke(); }
+      for (let k = 1; k < 6; k++) { c.beginPath(); c.moveTo(ox, oy + (mh * k) / 6); c.lineTo(ox + mw, oy + (mh * k) / 6); c.stroke(); }
+      const mark = (p: THREE.Vector3, color: string, label: string, shape: 'tri' | 'dot' | 'dia') => {
+        const [lon, lat] = toLL(p);
+        const x = ox + (lon / (2 * Math.PI) + 0.5) * mw, y = oy + (0.5 - lat / Math.PI) * mh;
+        c.fillStyle = color; c.strokeStyle = color;
+        c.beginPath();
+        if (shape === 'tri') { c.moveTo(x, y - 7); c.lineTo(x + 6, y + 5); c.lineTo(x - 6, y + 5); c.closePath(); c.fill(); }
+        else if (shape === 'dia') { c.moveTo(x, y - 6); c.lineTo(x + 6, y); c.lineTo(x, y + 6); c.lineTo(x - 6, y); c.closePath(); c.stroke(); }
+        else { c.arc(x, y, 4, 0, Math.PI * 2); c.fill(); }
+        c.font = '600 12px Rajdhani, sans-serif';
+        c.fillText(label, x + 9, y + 4);
+      };
+      for (const m of g.machines.machines) if (m.type === 'beacon') mark(g.machines.worldPos(m), '#ff5f5f', m.label, 'dot');
+      if (g.machines.machines.length) mark(g.machines.worldPos(g.machines.machines[0]), '#7dffb0', 'Base', 'dot');
+      mark(g.pilot.ship.pos, '#ffb547', 'Nave', 'dia');
+      mark(g.mode === 'ship' ? g.pilot.ship.pos : g.player.pos, '#ea7a2c', 'Você', 'tri');
+      c.fillStyle = 'rgba(232,241,248,0.5)';
+      c.font = '11px JetBrains Mono, monospace';
+      c.fillText(`${g.displayName(frame.id)} · projeção equiretangular · grade 30°`, 14, H - 14);
+    };
+    const d = frame.def;
+    side.innerHTML = `<div class="pnl" style="padding:14px"><div class="lbl">Cartografia orbital</div><div style="font-size:22px;font-weight:700;margin:4px 0">${g.displayName(frame.id)}</div>
+      <div class="kv"><div>Tipo</div><div>${TYPE_LABEL[d.type]}</div><div>Raio</div><div>${fmtDist(d.radius)}</div><div>Gravidade</div><div>${d.gravity.toFixed(1)} m/s²</div>
+      <div>Clima</div><div>${u.focus?.weather.label ?? '—'}</div><div>Estruturas</div><div>${g.knownPois.size} sinais registrados</div></div></div>
+      <p class="hint-line">▲ você · ◆ nave · ● base e balizas. Use o scanner para revelar sinais na bússola.</p>`;
+    requestAnimationFrame(draw);
+  }
+
   // ------------------------------------------------------------------ galaxy map
   private tabGalaxy(body: HTMLElement): void {
     const g = this.game;
@@ -952,7 +1033,8 @@ export class UI {
         if (s.id === here.id) { c.strokeStyle = '#ea7a2c'; c.lineWidth = 2; c.beginPath(); c.arc(x, y, size + 6, 0, Math.PI * 2); c.stroke(); c.lineWidth = 1; }
         if (s.id === g.jumpTarget) { c.strokeStyle = '#5fe1ff'; c.beginPath(); c.moveTo(hx, hy); c.lineTo(x, y); c.stroke(); }
         if (s === this.selStar) { c.strokeStyle = '#ffb547'; c.strokeRect(x - size - 6, y - size - 6, size * 2 + 12, size * 2 + 12); }
-        if (view.zoom > 4 || visited || s.id === here.id) {
+        const dHere = Math.hypot(s.pos[0] - here.pos[0], s.pos[1] - here.pos[1], s.pos[2] - here.pos[2]);
+        if ((view.zoom > 9 && dHere < JUMP_RANGE * 1.6) || (view.zoom > 4 && dHere < JUMP_RANGE) || visited || s.id === here.id || s === this.selStar) {
           c.fillStyle = 'rgba(232,241,248,0.6)';
           c.font = '11px Rajdhani, sans-serif';
           c.fillText(g.names[s.id] ?? s.name, x + size + 4, y + 3);

@@ -112,7 +112,7 @@ export class Ship {
     let thrust = 0;
     if (flying) {
       const fwd = c.forward > 0 ? c.forward * (c.boost ? 55 : 28) : c.forward * 18;
-      const local = new THREE.Vector3(c.strafe * 14, c.lift * 20, -fwd);
+      const local = new THREE.Vector3(c.strafe * 14, c.lift * 15, -fwd);
       accel.add(local.applyQuaternion(this.quat));
       thrust = Math.min(1, Math.abs(c.forward) * (c.boost ? 1 : 0.6) + Math.abs(c.lift) * 0.4 + Math.abs(c.strafe) * 0.3);
       if (this.assist) {
@@ -164,6 +164,7 @@ export class Ship {
       if (this.vel.length() > maxV) this.vel.setLength(maxV);
     }
     if (!this.landed) this.pos.addScaledVector(this.vel, dt);
+    else if (!this.cruise) this.vel.set(0, 0, 0);
 
     this.throttleVis += ((flying ? thrust : 0) - this.throttleVis) * Math.min(1, dt * 6);
     const gearTarget = this.gearDown ? 1 : 0;

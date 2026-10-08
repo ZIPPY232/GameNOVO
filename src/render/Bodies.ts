@@ -219,7 +219,11 @@ void main() {
   if (t < 0.0 || t > 1.0) discard;
   float n1 = texture(tNoise, vec3(t * 2.0, uSeed * 0.1, 0.5)).r;
   float n2 = texture(tNoise, vec3(t * 9.0, uSeed * 0.1 + 0.3, 0.2)).r;
-  float bands = 0.55 + 0.25 * sin(t * 140.0 + n1 * 6.0) + 0.2 * sin(t * 37.0 + n2 * 4.0);
+  // band-limit fine ringlets by their screen-space frequency to avoid moire
+  float fw = fwidth(t);
+  float fine = 1.0 - smoothstep(0.004, 0.012, fw);
+  float mid = 1.0 - smoothstep(0.015, 0.045, fw);
+  float bands = 0.55 + 0.25 * sin(t * 140.0 + n1 * 6.0) * fine + 0.2 * sin(t * 37.0 + n2 * 4.0) * mid;
   float dens = clamp(bands * (0.35 + n1 * 0.9), 0.0, 1.0) * smoothstep(0.0, 0.05, t) * smoothstep(1.0, 0.92, t);
   dens *= 1.0 - smoothstep(0.55, 0.6, t) * smoothstep(0.66, 0.6, t) * 0.9; // gap
   // planet shadow
@@ -276,10 +280,13 @@ export class StarMesh {
   update(t: number, distance: number): void {
     this.sMat.uniforms.uTime.value = t;
     this.gMat.uniforms.uTime.value = t;
-    // keep the glow perceptible from the far edges of the system
+    // keep the glow perceptible from the far edges of the system, but never let the
+    // billboard exceed ~40 degrees of sky when close to the star
     const k = Math.min(4, Math.max(1, distance / 1.5e6));
-    this.glow.scale.setScalar(this.star.radius * 6 * k);
-    this.gMat.uniforms.uIntensity.value = (40 / (k * k)) * this.glowFactor;
+    const size = Math.min(this.star.radius * 6 * k, distance * 0.35);
+    this.glow.scale.setScalar(size);
+    const lum = Math.min(3, Math.sqrt(this.star.luminosity));
+    this.gMat.uniforms.uIntensity.value = (40 / (k * k)) * this.glowFactor * lum;
   }
 
   dispose(): void {

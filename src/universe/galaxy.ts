@@ -44,7 +44,7 @@ export class Galaxy {
     // thin disc + spiral-ish density modulation
     const disc = Math.exp(-Math.abs(cy) / 40);
     const arms = 0.5 + 0.5 * this.density.fbm(cx / 220, cy / 220, cz / 220, 3);
-    const lambda = 2.2 * disc * (0.25 + arms * 1.5);
+    const lambda = 0.75 * disc * (0.2 + arms * 1.6);
     let n = 0;
     let L = Math.exp(-lambda), p = 1;
     do { n++; p *= rng.next(); } while (p > L && n < 8);

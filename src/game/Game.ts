@@ -320,9 +320,9 @@ export class Game {
     ship.cargo.load([]);
     ship.cargo.add('rock', 12);
     this.pilot.cockpitView = true;
-    // player beside the hatch, looking at the ship
-    const hatch = ship.localToFrame(ShipModel.HATCH);
-    const pdir = hatch.clone().normalize().addScaledVector(tangent, -4 / sr).normalize();
+    // player a few metres off the port bow, looking back at the wreck
+    const spot = ship.localToFrame(new THREE.Vector3(-8.5, 0, -5.5));
+    const pdir = spot.clone().normalize();
     const pr = focus.surfaceRadius(pdir) + 0.05;
     this.player.placeAt(pdir.clone().multiplyScalar(pr), ship.pos.clone().sub(pdir.clone().multiplyScalar(pr)));
     this.player.firstPerson = true;
