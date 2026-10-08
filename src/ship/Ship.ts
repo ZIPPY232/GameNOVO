@@ -33,6 +33,15 @@ export interface ShipEnv {
   surfaceDistance: number;
 }
 
+/** selectable speed levels: thrust multiplier and assisted speed limit (m/s) */
+export const SPEED_LEVELS = [
+  { id: 'precision', name: 'PRECISÃO', max: 30, thrust: 0.35 },
+  { id: 'maneuver', name: 'MANOBRA', max: 90, thrust: 0.6 },
+  { id: 'normal', name: 'NORMAL', max: 260, thrust: 1 },
+  { id: 'fast', name: 'RÁPIDO', max: 750, thrust: 1.8 },
+  { id: 'hyper', name: 'HIPER', max: 2500, thrust: 3.4 },
+] as const;
+
 export class Ship {
   readonly model = new ShipModel();
   pos = new THREE.Vector3();
@@ -57,6 +66,8 @@ export class Ship {
   cruise = false;
   cruiseCharge = 0;
   cruiseSpeed = 0;
+  /** index into SPEED_LEVELS */
+  speedLevel = 2;
   heat = 0;
   /** Modo Explorador: systems always online, no fuel use, no damage */
   unlimited = false;
@@ -124,8 +135,10 @@ export class Ship {
     // ---------------------------------------------------------- thrust
     let thrust = 0;
     if (flying) {
-      const fwd = c.forward > 0 ? c.forward * (c.boost ? 55 : 28) : c.forward * 18;
-      const local = new THREE.Vector3(c.strafe * 14, c.lift * 15, -fwd);
+      const lv = SPEED_LEVELS[this.speedLevel];
+      const k = lv.thrust;
+      const fwd = (c.forward > 0 ? c.forward * (c.boost ? 55 : 28) : c.forward * 18) * k;
+      const local = new THREE.Vector3(c.strafe * 14 * Math.sqrt(k), c.lift * 15 * Math.min(1.6, Math.sqrt(k)), -fwd);
       accel.add(local.applyQuaternion(this.quat));
       thrust = Math.min(1, Math.abs(c.forward) * (c.boost ? 1 : 0.6) + Math.abs(c.lift) * 0.4 + Math.abs(c.strafe) * 0.3);
       if (this.assist) {
@@ -174,8 +187,15 @@ export class Ship {
       this.cruiseCharge = 0;
       this.cruiseSpeed = 0;
       this.vel.addScaledVector(accel, dt);
-      const maxV = env.density > 0.05 ? 650 : 2000;
-      if (this.vel.length() > maxV) this.vel.setLength(maxV);
+      // speed limit from the selected level (assist) and the airframe (atmosphere)
+      const lv = SPEED_LEVELS[this.speedLevel];
+      const airframe = env.density > 0.05 ? 1500 : 6000;
+      const maxV = Math.min(airframe, flying ? lv.max * (c.boost ? 1.3 : 1) : airframe);
+      const v = this.vel.length();
+      if (v > maxV) {
+        // bleed off smoothly when switching to a slower level
+        this.vel.setLength(Math.max(maxV, v - Math.max(40, v * 1.2) * dt));
+      }
     }
     if (!this.landed) this.pos.addScaledVector(this.vel, dt);
     else if (!this.cruise) this.vel.set(0, 0, 0);
@@ -190,7 +210,7 @@ export class Ship {
     return {
       pos: this.pos.toArray(), vel: this.vel.toArray(), quat: this.quat.toArray(), hull: this.hull, fuel: this.fuel,
       powerOnline: this.powerOnline, thrustersOnline: this.thrustersOnline, warpCore: this.warpCore, o2Reserve: this.o2Reserve,
-      energyReserve: this.energyReserve, landed: this.landed, gearDown: this.gearDown, cargo: this.cargo.serialize(), name: this.name,
+      energyReserve: this.energyReserve, landed: this.landed, gearDown: this.gearDown, cargo: this.cargo.serialize(), name: this.name, speedLevel: this.speedLevel,
     };
   }
 
@@ -205,6 +225,7 @@ export class Ship {
     this.warpCore = d.warpCore as boolean;
     this.o2Reserve = d.o2Reserve as number;
     this.energyReserve = d.energyReserve as number;
+    this.speedLevel = typeof d.speedLevel === 'number' ? d.speedLevel : 2;
     this.landed = d.landed as boolean;
     this.gearDown = d.gearDown as boolean;
     this.gearT = this.gearDown ? 1 : 0;

@@ -354,7 +354,7 @@ export class UI {
       ['Clique esquerdo', 'Usar ferramenta (minerar, escanear, posicionar)'], ['Clique direito', 'Ação secundária (analisar, girar módulo)'],
       ['1–9 / roda', 'Barra de acesso rápido'], ['TAB', 'Terminal: inventário, fabricação, construção, traje, diário'], ['F', 'Lanterna'],
       ['V', 'Alternar 1ª / 3ª pessoa · cockpit / externa'], ['M', 'Mapa do sistema · navegação'], ['G', 'Mapa galáctico'],
-      ['Q / E', 'Rolagem (nave)'], ['X', 'Trem de pouso'], ['Z', 'Assistência de voo'], ['T', 'Motor de cruzeiro'], ['B', 'Freio'], ['L', 'Farol de pouso'],
+      ['1–5 / roda', 'Nível de velocidade (nave): Precisão, Manobra, Normal, Rápido, Hiper'], ['Q / E', 'Rolagem (nave)'], ['X', 'Trem de pouso'], ['Z', 'Assistência de voo'], ['T', 'Motor de cruzeiro'], ['B', 'Freio'], ['L', 'Farol de pouso'],
       ['J', 'Salto interestelar (nave) · diário (a pé)'], ['F3', 'Contador de FPS'], ['Esc', 'Pausa / fechar'],
     ];
     for (const [k, d] of rows) {

@@ -72,6 +72,19 @@ export interface ShipHudState {
   bodyMarkers: { x: number; y: number; label: string }[];
   warnings: string[];
   cockpit: boolean;
+  /** ship heading (deg, 0 = north) or null in deep space */
+  heading: number | null;
+  /** ship pitch / roll relative to the local horizon (deg) */
+  pitchDeg: number;
+  rollDeg: number;
+  /** pitch ladder lines projected to screen (camera-relative) */
+  ladder: { deg: number; x1: number; y1: number; x2: number; y2: number }[];
+  /** where the ship's nose points on screen */
+  nose: { x: number; y: number; visible: boolean };
+  speedLevel: number;
+  levels: { name: string; max: number }[];
+  cruise: boolean;
+  landingLight: boolean;
 }
 
 const h = (tag: string, cls = '', html = ''): HTMLElement => {
@@ -177,39 +190,39 @@ export class HUD {
   private buildShip(): void {
     const s = this.ship;
     const e = this.shipEls;
-    e.horizon = s.appendChild(h('div', 'fl-horizon'));
-    e.reticle = s.appendChild(h('div', 'fl-reticle'));
-    e.stick = s.appendChild(h('div', 'fl-stick'));
-    e.vel = s.appendChild(h('div', 'fl-vel', '⊕'));
-    const left = s.appendChild(h('div', 'fl-left pnl'));
-    left.appendChild(h('div', 'lbl', 'Velocidade'));
-    e.speed = left.appendChild(h('div', 'fl-big'));
-    e.vs = left.appendChild(h('div', 'fl-small'));
-    e.thr = left.appendChild(h('div', 'fl-small'));
-    const right = s.appendChild(h('div', 'fl-right pnl'));
-    right.appendChild(h('div', 'lbl', 'Altitude'));
-    e.alt = right.appendChild(h('div', 'fl-big'));
-    e.altl = right.appendChild(h('div', 'fl-small'));
-    e.near = right.appendChild(h('div', 'fl-small'));
-    const top = s.appendChild(h('div', 'fl-top pnl'));
+    this.flCanvas = s.appendChild(document.createElement('canvas')) as HTMLCanvasElement;
+    this.flCanvas.className = 'fl-canvas';
+    // top: flight mode and destination (under the heading tape)
+    const top = s.appendChild(h('div', 'fl-top'));
     e.mode = top.appendChild(h('div', 'fl-mode'));
-    e.target = top.appendChild(h('div', 'fl-small'));
-    e.warn = top.appendChild(h('div', 'fl-small'));
-    const bottom = s.appendChild(h('div', 'fl-bottom pnl'));
+    e.target = top.appendChild(h('div', 'fl-target'));
+    // altitude info (under the altitude tape)
+    const ai = s.appendChild(h('div', 'fl-altinfo'));
+    e.altl = ai.appendChild(h('div', 'fl-cap'));
+    e.near = ai.appendChild(h('div', 'fl-sub'));
+    e.att = ai.appendChild(h('div', 'fl-sub'));
+    // bottom systems strip
+    const bottom = s.appendChild(h('div', 'fl-bottom'));
+    // speed levels: segmented selector (keys 1-5 / mouse wheel)
+    e.levels = bottom.appendChild(h('div', 'fl-lvlist'));
+    const gauges = bottom.appendChild(h('div', 'fl-gauges'));
     const gauge = (key: string, label: string, color: string) => {
-      const g = bottom.appendChild(h('div', 'gauge'));
-      g.appendChild(h('div', 'lbl', label));
+      const g = gauges.appendChild(h('div', 'fl-gauge'));
+      const head = g.appendChild(h('div', 'gh'));
+      head.appendChild(h('span', 'gl', label));
+      e[key + 'V'] = head.appendChild(h('span', 'gv'));
       const t = g.appendChild(h('div', 'track'));
       const f = t.appendChild(h('div', 'fill'));
       f.style.background = color;
       e[key + 'F'] = f;
-      e[key + 'V'] = g.appendChild(h('div', 'v'));
     };
     gauge('fuel', 'Combustível', 'linear-gradient(90deg,#3fb7ff,#9fe6ff)');
-    gauge('hull', 'Integridade', 'linear-gradient(90deg,#9aa6b2,#eef3f8)');
+    gauge('hull', 'Casco', 'linear-gradient(90deg,#9aa6b2,#eef3f8)');
     gauge('temp', 'Temp. casco', 'linear-gradient(90deg,#ffb547,#ff5a4f)');
-    e.status = bottom.appendChild(h('div', 'fl-status'));
+    e.status = bottom.appendChild(h('div', 'fl-pills'));
+    e.warn = s.appendChild(h('div', 'fl-warn'));
     e.land = s.appendChild(h('div', 'land-ind hud-shadow'));
+    e.hints = s.appendChild(h('div', 'fl-hints', '<div><span class="key">1–5</span>velocidade</div><div><span class="key">R</span>motor</div><div><span class="key">T</span>cruzeiro</div><div><span class="key">X</span>trem de pouso</div><div><span class="key">Z</span>assistência</div><div><span class="key">L</span>farol</div><div><span class="key">B</span>freio</div><div><span class="key">V</span>câmera</div><div><span class="key">M</span>mapa</div>'));
     e.nav = s.appendChild(h('div', 'navmark'));
     e.nav.innerHTML = '<div class="d"></div><span></span>';
   }
@@ -221,6 +234,7 @@ export class HUD {
 
   showShip(on: boolean): void {
     this.ship.classList.toggle('on', on);
+    this.feed.classList.toggle('ship', on);
   }
 
   updateHotbar(inv: Inventory, sel: number): void {
@@ -324,37 +338,37 @@ export class HUD {
 
   updateShip(s: ShipHudState): void {
     const e = this.shipEls;
-    const W = window.innerWidth, H = window.innerHeight;
-    e.stick.style.left = `${W / 2 + s.stick.x * 120}px`;
-    e.stick.style.top = `${H / 2 + s.stick.y * 120}px`;
-    e.vel.style.display = s.vel.visible ? '' : 'none';
-    e.vel.style.left = `${s.vel.x}px`;
-    e.vel.style.top = `${s.vel.y}px`;
-    e.horizon.style.transform = `translate(-50%, ${(-s.horizonPitch * H * 0.6).toFixed(1)}px) rotate(${(-s.horizonRoll * 180 / Math.PI).toFixed(1)}deg)`;
-    e.horizon.style.display = s.horizonPitch === 999 ? 'none' : '';
-    this.set('sp', e.speed, s.speed >= 10000 ? `${(s.speed / 1000).toFixed(1)}<span class="fl-unit">km/s</span>` : `${Math.round(s.speed)}<span class="fl-unit">m/s</span>`, true);
-    this.set('vs', e.vs, `V/S ${s.vspeed >= 0 ? '+' : ''}${s.vspeed.toFixed(1)} m/s`);
-    this.set('thr', e.thr, `EMPUXO ${Math.round(s.throttle * 100)}%`);
-    const alt = s.altitude;
-    this.set('alt', e.alt, alt >= 100000 ? `${(alt / 1000).toFixed(0)}<span class="fl-unit">km</span>` : alt >= 10000 ? `${(alt / 1000).toFixed(1)}<span class="fl-unit">km</span>` : `${Math.round(alt)}<span class="fl-unit">m</span>`, true);
+    this.drawFlight(s);
+    this.ship.classList.toggle('cockpit', s.cockpit);
+    this.set('mode', e.mode, s.mode);
+    this.set('tgt', e.target, s.target ?? 'Sem destino · Mapa do Sistema (M)');
+    // speed levels
+    const lvHtml = s.levels.map((l, i) => {
+      const max = l.max >= 1000 ? `${(l.max / 1000).toFixed(1)} km/s` : `${l.max} m/s`;
+      return `<div class="lv${i === s.speedLevel && !s.cruise ? ' on' : ''}"><div class="nm"><span class="n">${i + 1}</span>${l.name}</div><div class="mx">${max}</div></div>`;
+    }).join('') + `<div class="lv cr${s.cruise ? ' on' : ''}"><div class="nm"><span class="n">T</span>CRUZEIRO</div><div class="mx">${s.cruise ? 'ATIVO' : 'fora da atm.'}</div></div>`;
+    this.set('lv', e.levels, lvHtml, true);
     this.set('altl', e.altl, s.altLabel);
     this.set('near', e.near, s.nearest);
-    this.set('mode', e.mode, s.mode);
-    this.set('tgt', e.target, s.target ?? 'Sem destino — Mapa do Sistema (M)');
-    this.set('swarn', e.warn, s.warnings.map((w) => `<span style="color:var(--red)">${w}</span>`).join(' · '), true);
+    this.set('att', e.att, s.heading === null ? '' : `ARF ${s.pitchDeg >= 0 ? '+' : ''}${s.pitchDeg.toFixed(0)}° · ROL ${s.rollDeg >= 0 ? '+' : ''}${s.rollDeg.toFixed(0)}°`);
     const g = (k: string, v: number, txt: string) => {
       e[k + 'F'].style.transform = `scaleX(${Math.max(0, Math.min(1, v)).toFixed(3)})`;
       this.set('g' + k, e[k + 'V'], txt);
     };
-    g('fuel', s.fuel / 100, s.unlimited ? 'ILIMITADO' : `${s.fuel.toFixed(1)}%`);
+    g('fuel', s.fuel / 100, s.unlimited ? '∞' : `${s.fuel.toFixed(0)}%`);
     g('hull', s.hull / 100, `${Math.round(s.hull)}%`);
     g('temp', (s.hullTemp - 20) / 1400, `${Math.round(s.hullTemp)}°C`);
-    const st = (on: boolean, a: string, b: string, mid = false) => `<span class="${mid ? 'mid' : on ? 'on' : 'off'}">● ${on ? a : b}</span>`;
+    const pill = (state: 'on' | 'off' | 'mid', label: string) => `<span class="pill ${state}">${label}</span>`;
     this.set('st', e.status, [
-      st(s.power, 'ENERGIA', 'SEM ENERGIA'), st(s.thrusters, 'PROPULSORES', 'PROPULSORES AVARIADOS'), st(s.engine, 'MOTOR LIGADO', 'MOTOR DESLIGADO (R)'),
-      st(s.assist, 'ASSISTÊNCIA', 'ASSIST. OFF (Z)', !s.assist), st(s.gear, 'TREM BAIXADO', 'TREM RECOLHIDO (X)', !s.gear),
-      s.unlimited ? '<span class="on">● MODO EXPLORADOR</span>' : '',
+      pill(s.power ? 'on' : 'off', s.power ? 'ENERGIA' : 'SEM ENERGIA'),
+      pill(s.thrusters ? 'on' : 'off', s.thrusters ? 'PROPULSORES' : 'PROPULSOR AVARIADO'),
+      pill(s.engine ? 'on' : 'off', s.engine ? 'MOTOR' : 'MOTOR OFF · R'),
+      pill(s.assist ? 'on' : 'mid', s.assist ? 'ASSIST.' : 'ASSIST. OFF'),
+      pill(s.gear ? 'on' : 'mid', s.gear ? 'TREM ▼' : 'TREM ▲'),
+      s.landingLight ? pill('on', 'FAROL') : '',
+      s.unlimited ? pill('on', 'EXPLORADOR') : '',
     ].join(''), true);
+    this.set('swarn', e.warn, s.warnings.map((w) => `<span>${w}</span>`).join(''), true);
     this.set('land', e.land, s.landing ?? '', true);
     // nav marker
     if (s.navMarker) {
@@ -374,7 +388,214 @@ export class HUD {
       el.style.top = `${m.y}px`;
       if (el.textContent !== m.label) el.textContent = m.label;
     });
-    e.reticle.style.display = s.cockpit ? '' : '';
+  }
+
+  // ------------------------------------------------------------------ flight instruments (canvas)
+  private flCanvas!: HTMLCanvasElement;
+
+  private drawFlight(s: ShipHudState): void {
+    const cv = this.flCanvas;
+    const W = window.innerWidth, H = window.innerHeight;
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+    }
+    const g = cv.getContext('2d')!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const CY = '#5fe1ff', INK = '#e8f1f8', AMB = '#ffb547', GRN = '#7dffb0';
+    const cx = W / 2, cy = H / 2;
+    g.lineCap = 'round';
+    g.shadowColor = 'rgba(0,0,0,0.6)';
+    g.shadowBlur = 3;
+
+    // ---------------- pitch ladder (kept clear of the heading tape and the bottom stack)
+    const offT = Math.min(W * 0.31, 400);
+    g.save();
+    g.beginPath();
+    g.rect(cx - offT + 60, 96, (offT - 60) * 2, H - 96 - 190);
+    g.clip();
+    g.font = '600 11px JetBrains Mono, monospace';
+    g.textBaseline = 'middle';
+    for (const l of s.ladder) {
+      const dx = l.x2 - l.x1, dy = l.y2 - l.y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      const mx = (l.x1 + l.x2) / 2, my = (l.y1 + l.y2) / 2;
+      const gap = l.deg === 0 ? 70 : len * 0.28;
+      g.strokeStyle = l.deg === 0 ? 'rgba(95,225,255,0.75)' : 'rgba(95,225,255,0.5)';
+      g.lineWidth = l.deg === 0 ? 1.6 : 1.2;
+      g.setLineDash(l.deg < 0 ? [6, 5] : []);
+      g.beginPath();
+      g.moveTo(l.x1, l.y1); g.lineTo(mx - ux * gap, my - uy * gap);
+      g.moveTo(mx + ux * gap, my + uy * gap); g.lineTo(l.x2, l.y2);
+      g.stroke();
+      g.setLineDash([]);
+      if (l.deg !== 0) {
+        // end ticks point toward the horizon
+        const nx = -uy * (l.deg > 0 ? 1 : -1) * 7, ny = ux * (l.deg > 0 ? 1 : -1) * 7;
+        g.beginPath();
+        g.moveTo(l.x1, l.y1); g.lineTo(l.x1 + nx, l.y1 + ny);
+        g.moveTo(l.x2, l.y2); g.lineTo(l.x2 + nx, l.y2 + ny);
+        g.stroke();
+        g.fillStyle = 'rgba(95,225,255,0.75)';
+        g.textAlign = 'right';
+        g.fillText(String(Math.abs(l.deg)), l.x1 - ux * 8, l.y1 - uy * 8);
+        g.textAlign = 'left';
+        g.fillText(String(Math.abs(l.deg)), l.x2 + ux * 8, l.y2 + uy * 8);
+      }
+    }
+
+    g.restore();
+
+    // ---------------- nose (boresight) and flight path vector
+    if (s.nose.visible) {
+      const { x, y } = s.nose;
+      g.strokeStyle = INK;
+      g.lineWidth = 1.6;
+      g.beginPath();
+      g.moveTo(x - 22, y); g.lineTo(x - 10, y); g.lineTo(x - 5, y + 7); g.lineTo(x, y); g.lineTo(x + 5, y + 7); g.lineTo(x + 10, y); g.lineTo(x + 22, y);
+      g.stroke();
+    }
+    if (s.vel.visible) {
+      const { x, y } = s.vel;
+      g.strokeStyle = GRN;
+      g.lineWidth = 1.6;
+      g.beginPath();
+      g.arc(x, y, 7, 0, Math.PI * 2);
+      g.moveTo(x - 7, y); g.lineTo(x - 18, y);
+      g.moveTo(x + 7, y); g.lineTo(x + 18, y);
+      g.moveTo(x, y - 7); g.lineTo(x, y - 14);
+      g.stroke();
+    }
+    // stick input
+    g.fillStyle = AMB;
+    g.beginPath();
+    g.arc(cx + s.stick.x * 110, cy + s.stick.y * 110, 3, 0, Math.PI * 2);
+    g.fill();
+
+    // ---------------- tapes
+    const off = Math.min(W * 0.31, 400);
+    const TH = Math.min(260, H * 0.42);
+    const lvMax = s.levels[s.speedLevel]?.max ?? 260;
+    const nice = (v: number) => {
+      const p = Math.pow(10, Math.floor(Math.log10(v)));
+      for (const m of [1, 2, 5, 10]) if (m * p >= v) return m * p;
+      return 10 * p;
+    };
+    const tape = (x: number, value: number, range: number, right: boolean, fmt: (v: number) => string, unit: string, marker?: number) => {
+      const upp = range / TH;
+      const major = nice(range / 4), minor = major / 5;
+      const top = cy - TH / 2;
+      // backing
+      const grd = g.createLinearGradient(x, top, x, top + TH);
+      grd.addColorStop(0, 'rgba(4,10,16,0)'); grd.addColorStop(0.15, 'rgba(4,10,16,0.35)');
+      grd.addColorStop(0.85, 'rgba(4,10,16,0.35)'); grd.addColorStop(1, 'rgba(4,10,16,0)');
+      g.fillStyle = grd;
+      g.fillRect(x - 34, top, 68, TH);
+      g.save();
+      g.beginPath(); g.rect(x - 40, top, 80, TH); g.clip();
+      const edge = right ? x - 34 : x + 34, dir = right ? 1 : -1;
+      g.strokeStyle = 'rgba(232,241,248,0.55)';
+      g.fillStyle = 'rgba(232,241,248,0.7)';
+      g.lineWidth = 1;
+      g.textAlign = right ? 'left' : 'right';
+      const v0 = Math.floor((value - range / 2) / minor) * minor;
+      for (let v = v0; v <= value + range / 2; v += minor) {
+        if (v < 0 && unit !== 'alt') continue;
+        const y = cy - (v - value) / upp;
+        const isMajor = Math.abs(v / major - Math.round(v / major)) < 1e-6;
+        g.beginPath();
+        g.moveTo(edge, y); g.lineTo(edge + dir * (isMajor ? 12 : 6), y);
+        g.stroke();
+        if (isMajor) g.fillText(fmt(v), edge + dir * 16, y);
+      }
+      if (marker !== undefined) {
+        const y = cy - (marker - value) / upp;
+        g.strokeStyle = AMB;
+        g.lineWidth = 3;
+        g.beginPath(); g.moveTo(edge, y); g.lineTo(edge + dir * 22, y); g.stroke();
+      }
+      g.restore();
+      // readout
+      g.fillStyle = 'rgba(4,10,16,0.82)';
+      g.strokeStyle = CY;
+      g.lineWidth = 1.2;
+      const bw = 92, bh = 30, bx = right ? x - 34 - 8 : x + 34 + 8 - bw;
+      g.beginPath();
+      if (right) { g.moveTo(bx, cy); g.lineTo(bx + 8, cy - bh / 2); g.lineTo(bx + bw, cy - bh / 2); g.lineTo(bx + bw, cy + bh / 2); g.lineTo(bx + 8, cy + bh / 2); }
+      else { g.moveTo(bx + bw, cy); g.lineTo(bx + bw - 8, cy - bh / 2); g.lineTo(bx, cy - bh / 2); g.lineTo(bx, cy + bh / 2); g.lineTo(bx + bw - 8, cy + bh / 2); }
+      g.closePath(); g.fill(); g.stroke();
+      g.fillStyle = INK;
+      g.font = '700 17px JetBrains Mono, monospace';
+      g.textAlign = 'center';
+      g.fillText(fmt(value), bx + bw / 2 + (right ? 4 : -4), cy + 1);
+      g.font = '600 11px JetBrains Mono, monospace';
+    };
+    const fmtSpeed = (v: number) => (Math.abs(v) >= 10000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
+    const speedRange = s.cruise ? nice(Math.max(400, s.speed * 0.8)) : nice(Math.max(lvMax * 0.6, 20));
+    tape(cx - off, s.speed, speedRange, false, fmtSpeed, 'spd', s.cruise ? undefined : lvMax);
+    const altRange = nice(Math.max(120, s.altitude * 0.7));
+    const fmtAlt = (v: number) => (Math.abs(v) >= 100000 ? `${Math.round(v / 1000)}k` : Math.abs(v) >= 10000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
+    tape(cx + off, s.altitude, altRange, true, fmtAlt, 'alt');
+    // captions + units
+    g.font = '600 10px Rajdhani, sans-serif';
+    g.fillStyle = 'rgba(232,241,248,0.6)';
+    g.textAlign = 'center';
+    g.fillText('VELOCIDADE  m/s', cx - off, cy - TH / 2 - 10);
+    g.fillText('ALTITUDE  m', cx + off, cy - TH / 2 - 10);
+    // throttle bar (outside the speed tape)
+    const tx = cx - off - 58, tTop = cy - TH / 2 + 20, tH = TH - 40;
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    g.fillRect(tx - 3, tTop, 6, tH);
+    g.fillStyle = s.cruise ? CY : AMB;
+    g.fillRect(tx - 3, tTop + tH * (1 - s.throttle), 6, tH * s.throttle);
+    g.fillStyle = 'rgba(232,241,248,0.6)';
+    g.font = '600 10px JetBrains Mono, monospace';
+    g.fillText(`${Math.round(s.throttle * 100)}%`, tx, tTop + tH + 12);
+    // vertical speed caret (inside the altitude tape)
+    const vx = cx + off - 48;
+    const vy = cy - Math.max(-1, Math.min(1, s.vspeed / 60)) * (TH / 2 - 16);
+    g.strokeStyle = 'rgba(255,255,255,0.15)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(vx, cy - TH / 2 + 16); g.lineTo(vx, cy + TH / 2 - 16); g.stroke();
+    g.fillStyle = s.vspeed < -8 ? AMB : GRN;
+    g.beginPath(); g.moveTo(vx - 6, vy); g.lineTo(vx - 14, vy - 5); g.lineTo(vx - 14, vy + 5); g.closePath(); g.fill();
+    g.textAlign = 'right';
+    g.fillText(`${s.vspeed >= 0 ? '+' : ''}${s.vspeed.toFixed(0)}`, vx - 17, vy);
+
+    // ---------------- heading tape
+    if (s.heading !== null) {
+      const hw = Math.min(220, W * 0.22), hy = 30;
+      const ppd = hw / 45;
+      const grd = g.createLinearGradient(cx - hw, 0, cx + hw, 0);
+      grd.addColorStop(0, 'rgba(4,10,16,0)'); grd.addColorStop(0.2, 'rgba(4,10,16,0.4)');
+      grd.addColorStop(0.8, 'rgba(4,10,16,0.4)'); grd.addColorStop(1, 'rgba(4,10,16,0)');
+      g.fillStyle = grd;
+      g.fillRect(cx - hw, hy - 16, hw * 2, 32);
+      g.save();
+      g.beginPath(); g.rect(cx - hw, hy - 18, hw * 2, 40); g.clip();
+      const names: Record<number, string> = { 0: 'N', 45: 'NE', 90: 'L', 135: 'SE', 180: 'S', 225: 'SO', 270: 'O', 315: 'NO' };
+      g.strokeStyle = 'rgba(232,241,248,0.55)';
+      g.textAlign = 'center';
+      for (let d = Math.floor((s.heading - 50) / 5) * 5; d <= s.heading + 50; d += 5) {
+        const x = cx + (d - s.heading) * ppd;
+        const dd = ((d % 360) + 360) % 360;
+        const major = dd % 15 === 0;
+        g.beginPath(); g.moveTo(x, hy + 14); g.lineTo(x, hy + (major ? 4 : 9)); g.stroke();
+        if (major) {
+          g.fillStyle = names[dd] ? AMB : 'rgba(232,241,248,0.7)';
+          g.font = names[dd] ? '700 12px Rajdhani, sans-serif' : '600 10px JetBrains Mono, monospace';
+          g.fillText(names[dd] ?? String(dd), x, hy - 4);
+        }
+      }
+      g.restore();
+      g.fillStyle = CY;
+      g.beginPath(); g.moveTo(cx, hy + 16); g.lineTo(cx - 6, hy + 24); g.lineTo(cx + 6, hy + 24); g.closePath(); g.fill();
+      g.font = '700 12px JetBrains Mono, monospace';
+      g.fillText(`${String(Math.round(s.heading) % 360).padStart(3, '0')}°`, cx, hy + 34);
+    }
   }
 
   toast(text: string, color = 'var(--ink)'): void {

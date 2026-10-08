@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Ship, type ShipControls, type ShipEnv } from '../ship/Ship';
+import { Ship, SPEED_LEVELS, type ShipControls, type ShipEnv } from '../ship/Ship';
 import { ShipModel } from '../ship/ShipModel';
 import { BLOCK_SOLID } from '../voxel/blocks';
 import type { ShipHudState } from '../ui/HUD';
@@ -24,6 +24,7 @@ export class Pilot {
   private screenTimer = 0;
   private shake = 0;
   altitude = 0;
+  private supportTimer = 0;
   surfaceDistance = 1e9;
   density = 0;
   landingLight = false;
@@ -60,6 +61,22 @@ export class Pilot {
       env.gravity.copy(env.up).multiplyScalar(-gm);
       const surf = this.surfaceRadiusAt(s.pos);
       this.altitude = r - surf;
+      // near the ground, measure against the real voxels (rocks, ice, trees, buildings)
+      const phys = g.universe.focus?.body === frame ? g.universe.focus.physics : null;
+      if (phys && this.altitude < 300) {
+        const down = env.up.clone().negate();
+        const reach = Math.max(8, this.altitude + 40);
+        let best = Infinity;
+        const hit = phys.raycast(s.pos, down, reach, false);
+        if (hit) best = hit.dist;
+        // the gear may rest on a ledge while the centre hangs over a gap
+        for (const f of ShipModel.FEET) {
+          const fp = s.localToFrame(new THREE.Vector3(f.x, 0, f.z));
+          const fh = phys.raycast(fp, down, reach, false);
+          if (fh) best = Math.min(best, fh.dist + (fp.clone().sub(s.pos).dot(down)));
+        }
+        if (best < Infinity) this.altitude = best;
+      }
       const atm = frame.def.atmosphere;
       if (atm) {
         const h = Math.max(0, r - frame.radius);
@@ -154,6 +171,9 @@ export class Pilot {
       c.boost = input.down('ShiftLeft');
       c.brake = input.down('KeyB');
       if (input.hit('KeyR')) this.toggleEngine();
+      // speed level: 1-5 or mouse wheel
+      for (let i = 0; i < SPEED_LEVELS.length; i++) if (input.hit(`Digit${i + 1}`)) this.setSpeedLevel(i);
+      if (input.wheel !== 0) this.setSpeedLevel(s.speedLevel + (input.wheel < 0 ? 1 : -1));
       if (input.hit('KeyX')) { s.gearDown = !s.gearDown; g.toast(s.gearDown ? 'Trem de pouso baixado' : 'Trem de pouso recolhido'); }
       if (input.hit('KeyZ')) { s.assist = !s.assist; g.toast(s.assist ? 'Assistência de voo ativada' : 'Assistência de voo DESATIVADA', s.assist ? undefined : 'var(--amber)'); }
       if (input.hit('KeyL')) this.landingLight = !this.landingLight;
@@ -178,6 +198,17 @@ export class Pilot {
     if (s.landed && s.engineOn && s.canFly && (c.lift > 0 || c.forward > 0.5)) {
       s.landed = false;
       g.audio.thrusterPuff();
+    }
+    // a landed ship whose ground vanished (mined away, or streamed-in terrain lower
+    // than the estimate it touched down on) starts falling again
+    if (s.landed && !this.docked && this.env.gravity.lengthSq() > 0.01) {
+      this.supportTimer -= dt;
+      if (this.supportTimer <= 0) {
+        this.supportTimer = 0.25;
+        let support = 0;
+        for (const lf of ShipModel.FEET) if (this.penetration(s.localToFrame(lf.clone().add(new THREE.Vector3(0, -0.3, 0)))) > 0) support++;
+        if (support < 2) { s.landed = false; this.contactTimer = 0; }
+      }
     }
     const wasLanded = s.landed;
     s.update(dt, c, this.env);
@@ -253,6 +284,16 @@ export class Pilot {
       }
     }
     return false;
+  }
+
+  setSpeedLevel(i: number): void {
+    const s = this.ship;
+    const n = Math.max(0, Math.min(SPEED_LEVELS.length - 1, i));
+    if (n === s.speedLevel) return;
+    s.speedLevel = n;
+    const lv = SPEED_LEVELS[n];
+    this.game.audio.ui('click');
+    this.game.toast(`Velocidade: ${lv.name} · até ${lv.max >= 1000 ? (lv.max / 1000).toFixed(1) + ' km/s' : lv.max + ' m/s'}`, 'var(--cyan)');
   }
 
   private toggleEngine(): void {
@@ -409,57 +450,130 @@ export class Pilot {
     const s = this.ship;
     const cv = s.model.parts.screenCanvas;
     const g = cv.getContext('2d')!;
-    g.fillStyle = '#02060a';
+    const PW = 1024 / 3;
+    const CY = '#5fe1ff', INK = '#e8f1f8', DIM = '#7f93a3', AMB = '#ffb547', GRN = '#7dffb0', RED = '#ff5a4f';
+    g.fillStyle = '#02070b';
     g.fillRect(0, 0, 1024, 256);
-    const panel = (x: number, title: string) => {
-      g.strokeStyle = 'rgba(95,225,255,0.5)';
+    const frame = (i: number, title: string, sub = '') => {
+      const x = i * PW;
+      g.fillStyle = '#04101a';
+      g.fillRect(x + 6, 6, PW - 12, 244);
+      g.strokeStyle = 'rgba(95,225,255,0.35)';
       g.lineWidth = 2;
-      g.strokeRect(x + 8, 8, 320, 240);
-      g.fillStyle = '#5fe1ff';
-      g.font = '600 22px Rajdhani, sans-serif';
-      g.fillText(title, x + 20, 36);
+      g.strokeRect(x + 6, 6, PW - 12, 244);
+      g.fillStyle = 'rgba(95,225,255,0.12)';
+      g.fillRect(x + 6, 6, PW - 12, 30);
+      g.fillStyle = CY;
+      g.font = '700 20px Rajdhani, sans-serif';
+      g.textBaseline = 'middle';
+      g.textAlign = 'left';
+      g.fillText(title, x + 18, 22);
+      g.fillStyle = DIM;
+      g.textAlign = 'right';
+      g.font = '14px JetBrains Mono, monospace';
+      g.fillText(sub, x + PW - 18, 22);
+      return x;
     };
-    panel(0, 'VOO');
-    g.font = '600 46px JetBrains Mono, monospace';
-    g.fillStyle = '#e8f1f8';
-    g.fillText(`${Math.round(s.vel.length())}`, 20, 110);
+    // --- flight
+    const lv = SPEED_LEVELS[s.speedLevel];
+    let x = frame(0, 'VOO', s.cruise ? 'CRUZEIRO' : lv.name);
+    const v = s.vel.length();
+    g.textAlign = 'left';
+    g.fillStyle = INK;
+    g.font = '700 58px JetBrains Mono, monospace';
+    g.fillText(v >= 10000 ? (v / 1000).toFixed(1) : String(Math.round(v)), x + 20, 82);
+    g.fillStyle = DIM;
     g.font = '18px JetBrains Mono, monospace';
-    g.fillText('m/s', 220, 110);
-    g.fillText(`ALT ${Math.round(this.altitude)} m`, 20, 160);
-    g.fillText(`EMP ${Math.round(s.throttleVis * 100)}%`, 20, 200);
-    panel(344, 'ATITUDE');
-    const up = this.env.up.lengthSq() > 0 ? this.env.up.clone().applyQuaternion(s.quat.clone().invert()) : new THREE.Vector3(0, 1, 0);
+    g.fillText(v >= 10000 ? 'km/s' : 'm/s', x + 250, 92);
+    // speed level bar
+    for (let i = 0; i < SPEED_LEVELS.length; i++) {
+      g.fillStyle = i === s.speedLevel && !s.cruise ? AMB : i < s.speedLevel ? 'rgba(255,181,71,0.35)' : 'rgba(255,255,255,0.1)';
+      g.fillRect(x + 20 + i * 60, 120, 54, 10);
+    }
+    const vs = this.env.up.lengthSq() > 0 ? s.vel.dot(this.env.up) : 0;
+    g.font = '18px JetBrains Mono, monospace';
+    g.fillStyle = INK;
+    g.fillText(`ALT  ${this.altitude >= 10000 ? (this.altitude / 1000).toFixed(1) + ' km' : Math.round(this.altitude) + ' m'}`, x + 20, 160);
+    g.fillStyle = vs < -8 ? AMB : INK;
+    g.fillText(`V/S  ${vs >= 0 ? '+' : ''}${vs.toFixed(1)} m/s`, x + 20, 190);
+    g.fillStyle = INK;
+    g.fillText(`EMP  ${Math.round(s.throttleVis * 100)}%`, x + 20, 220);
+    g.fillStyle = 'rgba(255,255,255,0.1)';
+    g.fillRect(x + 170, 212, 140, 12);
+    g.fillStyle = s.cruise ? CY : AMB;
+    g.fillRect(x + 170, 212, 140 * s.throttleVis, 12);
+    // --- attitude ball
+    x = frame(1, 'ATITUDE', this.env.up.lengthSq() > 0 ? '' : 'ESPAÇO');
+    const up = this.env.up.lengthSq() > 0 ? this.env.up.clone().normalize().applyQuaternion(s.quat.clone().invert()) : new THREE.Vector3(0, 1, 0);
     const roll = Math.atan2(-up.x, up.y);
     const pitch = Math.asin(THREE.MathUtils.clamp(up.z, -1, 1));
+    const bx = x + PW / 2, by = 146, R = 92;
     g.save();
-    g.translate(344 + 168, 140);
+    g.beginPath(); g.arc(bx, by, R, 0, Math.PI * 2); g.clip();
+    g.translate(bx, by);
     g.rotate(roll);
-    g.fillStyle = '#123247';
-    g.fillRect(-150, -200 + pitch * 120, 300, 200);
-    g.fillStyle = '#3a2a1a';
-    g.fillRect(-150, pitch * 120, 300, 200);
-    g.strokeStyle = '#e8f1f8';
-    g.beginPath(); g.moveTo(-150, pitch * 120); g.lineTo(150, pitch * 120); g.stroke();
+    const ppr = R / 0.9; // pixels per radian
+    g.fillStyle = '#16405c';
+    g.fillRect(-R * 2, -R * 4 + pitch * ppr, R * 4, R * 4);
+    g.fillStyle = '#4a3220';
+    g.fillRect(-R * 2, pitch * ppr, R * 4, R * 4);
+    g.strokeStyle = INK;
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(-R * 2, pitch * ppr); g.lineTo(R * 2, pitch * ppr); g.stroke();
+    g.lineWidth = 1.2;
+    g.font = '12px JetBrains Mono, monospace';
+    g.fillStyle = INK;
+    g.textAlign = 'left';
+    for (let d = -60; d <= 60; d += 10) {
+      if (!d) continue;
+      const y = pitch * ppr - THREE.MathUtils.degToRad(d) * ppr;
+      const w = d % 20 === 0 ? 30 : 16;
+      g.beginPath(); g.moveTo(-w, y); g.lineTo(w, y); g.stroke();
+      if (d % 20 === 0) g.fillText(String(Math.abs(d)), w + 4, y);
+    }
     g.restore();
-    g.strokeStyle = '#ffb547';
-    g.lineWidth = 3;
-    g.beginPath(); g.moveTo(344 + 120, 140); g.lineTo(344 + 155, 140); g.moveTo(344 + 181, 140); g.lineTo(344 + 216, 140); g.stroke();
-    panel(688, 'SISTEMAS');
-    g.font = '18px JetBrains Mono, monospace';
-    const line = (y: number, label: string, v: number, col: string) => {
-      g.fillStyle = '#9ab';
-      g.fillText(label, 700, y);
-      g.fillStyle = 'rgba(255,255,255,0.1)';
-      g.fillRect(830, y - 14, 170, 14);
+    g.strokeStyle = 'rgba(95,225,255,0.6)';
+    g.lineWidth = 2;
+    g.beginPath(); g.arc(bx, by, R, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = AMB;
+    g.lineWidth = 4;
+    g.beginPath();
+    g.moveTo(bx - 52, by); g.lineTo(bx - 18, by); g.lineTo(bx - 10, by + 8);
+    g.moveTo(bx + 52, by); g.lineTo(bx + 18, by); g.lineTo(bx + 10, by + 8);
+    g.stroke();
+    g.fillStyle = AMB;
+    g.beginPath(); g.arc(bx, by, 3, 0, Math.PI * 2); g.fill();
+    // --- systems
+    x = frame(2, 'SISTEMAS', s.unlimited ? 'EXPLORADOR' : '');
+    g.textAlign = 'left';
+    const line = (y: number, label: string, val: number, col: string, txt: string) => {
+      g.fillStyle = DIM;
+      g.font = '16px JetBrains Mono, monospace';
+      g.fillText(label, x + 18, y);
+      g.fillStyle = 'rgba(255,255,255,0.08)';
+      g.fillRect(x + 92, y - 7, 150, 14);
       g.fillStyle = col;
-      g.fillRect(830, y - 14, 170 * Math.max(0, Math.min(1, v)), 14);
+      g.fillRect(x + 92, y - 7, 150 * Math.max(0, Math.min(1, val)), 14);
+      g.fillStyle = INK;
+      g.fillText(txt, x + 252, y);
     };
-    line(80, 'COMB', s.fuel / 100, '#5fe1ff');
-    line(115, 'CASCO', s.hull / 100, '#dfe6ee');
-    line(150, 'TEMP', (s.hullTemp - 20) / 1400, '#ff7a4f');
-    line(185, 'O2', s.o2Reserve / 800, '#8fe0ff');
-    g.fillStyle = s.engineOn ? '#7dffb0' : '#ff5a4f';
-    g.fillText(s.engineOn ? 'MOTOR ONLINE' : 'MOTOR OFFLINE', 700, 228);
+    line(60, 'COMB', s.fuel / 100, '#5fc8ff', s.unlimited ? '∞' : `${Math.round(s.fuel)}%`);
+    line(90, 'CASCO', s.hull / 100, '#dfe6ee', `${Math.round(s.hull)}%`);
+    line(120, 'TEMP', (s.hullTemp - 20) / 1400, '#ff7a4f', `${Math.round(s.hullTemp)}°`);
+    line(150, 'O₂', s.o2Reserve / 800, '#8fe0ff', `${Math.round((s.o2Reserve / 800) * 100)}%`);
+    const lamp = (cx: number, cy: number, on: boolean, label: string, warn = false) => {
+      g.fillStyle = on ? (warn ? AMB : GRN) : RED;
+      g.beginPath(); g.arc(cx, cy, 6, 0, Math.PI * 2); g.fill();
+      g.fillStyle = INK;
+      g.font = '14px JetBrains Mono, monospace';
+      g.fillText(label, cx + 12, cy);
+    };
+    lamp(x + 26, 192, s.engineOn, 'MOTOR');
+    lamp(x + 126, 192, s.assist, 'ASSIST.', false);
+    lamp(x + 236, 192, s.gearDown, 'TREM', true);
+    lamp(x + 26, 224, s.powerOnline, 'ENERGIA');
+    lamp(x + 126, 224, s.thrustersOnline, 'PROPULS.');
+    lamp(x + 236, 224, this.landingLight, 'FAROL', true);
     s.model.parts.screens.needsUpdate = true;
   }
 
@@ -552,7 +666,45 @@ export class Pilot {
     if (s.hullTemp > 900) warnings.push('SUPERAQUECIMENTO');
     if (!s.landed && this.altitude < 60 && s.vel.dot(this.env.up) < -15) warnings.push('TERRENO');
     const nearest = g.universe.system.nearestBody(g.universe.system.posToSystem(frame, s.pos, new THREE.Vector3()));
+    // attitude, heading and the camera-relative pitch ladder
+    const upW = this.env.up.lengthSq() > 0 ? this.env.up.clone().normalize() : null;
+    const fwd = s.forward();
+    let heading: number | null = null, pitchDeg = 0, rollDeg = 0;
+    const ladder: ShipHudState['ladder'] = [];
+    if (upW) {
+      pitchDeg = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(fwd.dot(upW), -1, 1)));
+      rollDeg = THREE.MathUtils.radToDeg(Math.atan2(-s.right().dot(upW), s.upVec().dot(upW)));
+      if (frame) {
+        // the body frame spins about +Y: north is the axis projected on the horizon
+        const north = new THREE.Vector3(0, 1, 0).addScaledVector(upW, -upW.y);
+        if (north.lengthSq() > 1e-6) {
+          north.normalize();
+          const east = north.clone().cross(upW);
+          const hf = fwd.clone().addScaledVector(upW, -fwd.dot(upW));
+          if (hf.lengthSq() > 1e-6) heading = (THREE.MathUtils.radToDeg(Math.atan2(hf.dot(east), hf.dot(north))) + 360) % 360;
+        }
+      }
+      const camF = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camQuat);
+      const hf = camF.clone().addScaledVector(upW, -camF.dot(upW));
+      if (hf.lengthSq() < 1e-4) hf.set(0, 1, 0).applyQuaternion(this.camQuat).addScaledVector(upW, -1).negate();
+      hf.normalize();
+      const hr = hf.clone().cross(upW).normalize();
+      const camPitch = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(camF.dot(upW), -1, 1)));
+      for (let d = -80; d <= 80; d += 10) {
+        if (Math.abs(d - camPitch) > 45) continue;
+        const r = THREE.MathUtils.degToRad(d);
+        const dir = hf.clone().multiplyScalar(Math.cos(r)).addScaledVector(upW, Math.sin(r));
+        const w = d === 0 ? 0.5 : 0.17;
+        const a = project(this.camPos.clone().addScaledVector(dir, 1000).addScaledVector(hr, -1000 * w));
+        const b = project(this.camPos.clone().addScaledVector(dir, 1000).addScaledVector(hr, 1000 * w));
+        if (a.behind || b.behind) continue;
+        ladder.push({ deg: d, x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+      }
+    }
+    const nosePr = project(this.camPos.clone().addScaledVector(fwd, 1000));
     return {
+      heading, pitchDeg, rollDeg, ladder, nose: { x: nosePr.x, y: nosePr.y, visible: !nosePr.behind },
+      speedLevel: s.speedLevel, levels: SPEED_LEVELS.map((l) => ({ name: l.name, max: l.max })), cruise: s.cruise, landingLight: this.landingLight,
       speed: s.vel.length(), vspeed: this.env.up.lengthSq() > 0 ? s.vel.dot(this.env.up) : 0, altitude: this.altitude,
       altLabel: frame ? (this.altitude > atmTop && atmTop > 0 ? 'ACIMA DA ATMOSFERA' : 'SOBRE O TERRENO') : 'ATÉ A SUPERFÍCIE MAIS PRÓXIMA',
       throttle: s.throttleVis, fuel: s.fuel, unlimited: s.unlimited, hull: s.hull, hullTemp: s.hullTemp, power: s.powerOnline, thrusters: s.thrustersOnline, engine: s.engineOn,

@@ -47,6 +47,7 @@ recomendada para os presets Alto/Ultra/Cinematográfico.
 | F | lanterna · V câmera 1ª/3ª pessoa (cockpit/externa) |
 | M / G | mapa do sistema / mapa galáctico |
 | Q/E, X, Z, T, B, L, J | rolagem, trem de pouso, assistência, cruzeiro, freio, farol, salto |
+| 1–5 / roda (na nave) | nível de velocidade: Precisão 30 m/s, Manobra 90, Normal 260, Rápido 750, Hiper 2,5 km/s |
 
 ## Arquitetura
 
