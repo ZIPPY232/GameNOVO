@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Astronaut, AstronautAnimator, type AnimState } from '../player/Astronaut';
 import { buildTool, toolMuzzle } from './Tools';
 import { B, BLOCKS } from '../voxel/blocks';
@@ -96,11 +97,11 @@ export class Player {
     this.vmArm = new THREE.Group();
     const armMat = this.model.mats.primary;
     const gloveMat = this.model.mats.secondary;
-    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.42), armMat);
-    fore.position.set(0, 0, 0.18);
-    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.14), gloveMat);
-    glove.position.set(0, 0, -0.06);
-    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.17, 0.05), gloveMat);
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.36, 6, 16).rotateX(Math.PI / 2), armMat);
+    fore.position.set(0, 0, 0.2);
+    const glove = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.085, 0.13, 3, 0.035), gloveMat);
+    glove.position.set(0, 0, -0.05);
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.016, 8, 20), gloveMat);
     cuff.position.set(0, 0, 0.02);
     this.vmArm.add(fore, glove, cuff);
     this.vmTool = new THREE.Group();

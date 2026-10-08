@@ -32,29 +32,37 @@ export function buildTool(id: ToolId | 'block' | 'none'): THREE.Group {
     return o;
   };
   switch (id) {
-    case 'extractor':
-      add(rb(0.07, 0.12, 0.06), m.dark, 0, -0.05, 0.02);
-      add(rb(0.09, 0.09, 0.32), m.body, 0, 0.03, -0.12);
-      add(rb(0.095, 0.03, 0.2), m.orange, 0, 0.085, -0.1);
-      add(new THREE.CylinderGeometry(0.03, 0.04, 0.1, 10).rotateX(Math.PI / 2), m.dark, 0, 0.03, -0.32);
-      add(new THREE.CylinderGeometry(0.018, 0.018, 0.02, 10).rotateX(Math.PI / 2), m.emit, 0, 0.03, -0.375).name = 'muzzle';
-      add(rb(0.05, 0.05, 0.12), m.dark, 0, -0.03, -0.18);
-      add(rb(0.02, 0.03, 0.06), m.cyan, 0.05, 0.05, -0.05);
+    case 'extractor': {
+      // grip, capsule body with cooling coils, emitter bell and an energy cell on top
+      const grip = add(rb(0.05, 0.13, 0.055, 0.02), m.dark, 0, -0.06, 0.02);
+      grip.rotation.x = -0.25;
+      add(new THREE.CapsuleGeometry(0.045, 0.24, 6, 16).rotateX(Math.PI / 2), m.body, 0, 0.03, -0.11);
+      for (let i = 0; i < 3; i++) add(new THREE.TorusGeometry(0.047, 0.008, 8, 20), m.orange, 0, 0.03, -0.17 - i * 0.03);
+      add(new THREE.CylinderGeometry(0.028, 0.048, 0.07, 16).rotateX(Math.PI / 2), m.dark, 0, 0.03, -0.3);
+      add(new THREE.CylinderGeometry(0.016, 0.016, 0.02, 12).rotateX(Math.PI / 2), m.emit, 0, 0.03, -0.34).name = 'muzzle';
+      add(new THREE.CapsuleGeometry(0.018, 0.08, 4, 10).rotateX(Math.PI / 2), m.cyan, 0, 0.085, -0.06);
+      add(rb(0.03, 0.025, 0.12, 0.01), m.dark, 0, 0.07, -0.06);
       break;
-    case 'scanner':
-      add(rb(0.06, 0.12, 0.05), m.dark, 0, -0.05, 0.02);
-      add(rb(0.16, 0.11, 0.05), m.body, 0, 0.05, -0.08);
+    }
+    case 'scanner': {
+      const grip = add(rb(0.05, 0.12, 0.05, 0.02), m.dark, 0, -0.05, 0.02);
+      grip.rotation.x = -0.2;
+      add(rb(0.17, 0.11, 0.05, 0.025), m.body, 0, 0.05, -0.08);
       add(new THREE.PlaneGeometry(0.12, 0.075), m.green, 0, 0.055, -0.052).rotation.y = Math.PI;
-      add(new THREE.CylinderGeometry(0.025, 0.025, 0.05, 12).rotateX(Math.PI / 2), m.dark, 0, 0.05, -0.13);
-      add(new THREE.SphereGeometry(0.02, 10, 8), m.cyan, 0, 0.05, -0.16).name = 'muzzle';
+      add(new THREE.TorusGeometry(0.03, 0.008, 8, 20), m.orange, 0, 0.05, -0.115);
+      add(new THREE.CylinderGeometry(0.026, 0.03, 0.05, 16).rotateX(Math.PI / 2), m.dark, 0, 0.05, -0.13);
+      add(new THREE.SphereGeometry(0.02, 12, 10), m.cyan, 0, 0.05, -0.16).name = 'muzzle';
       break;
-    case 'builder':
-      add(rb(0.06, 0.12, 0.05), m.dark, 0, -0.05, 0.02);
-      add(rb(0.1, 0.07, 0.24), m.body, 0, 0.03, -0.1);
-      add(rb(0.12, 0.02, 0.12), m.orange, 0, 0.075, -0.06);
-      add(new THREE.ConeGeometry(0.04, 0.08, 4).rotateX(-Math.PI / 2), m.dark, 0, 0.03, -0.25);
-      add(new THREE.SphereGeometry(0.015, 8, 6), m.cyan, 0, 0.03, -0.3).name = 'muzzle';
+    }
+    case 'builder': {
+      const grip = add(rb(0.05, 0.12, 0.05, 0.02), m.dark, 0, -0.05, 0.02);
+      grip.rotation.x = -0.2;
+      add(new THREE.CapsuleGeometry(0.04, 0.18, 6, 14).rotateX(Math.PI / 2), m.body, 0, 0.03, -0.1);
+      add(rb(0.11, 0.02, 0.12, 0.008), m.orange, 0, 0.07, -0.08);
+      add(new THREE.ConeGeometry(0.035, 0.08, 16).rotateX(-Math.PI / 2), m.dark, 0, 0.03, -0.24);
+      add(new THREE.SphereGeometry(0.015, 10, 8), m.cyan, 0, 0.03, -0.29).name = 'muzzle';
       break;
+    }
     default:
       break;
   }

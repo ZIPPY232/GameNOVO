@@ -2,11 +2,10 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 /**
- * Voxel astronaut. Keeps the reference's blocky geometry (big cubic head,
- * rectangular torso, separate square limbs, blocky feet) and dresses it in an
- * original exploration suit: layered panels, reflective visor, life-support
- * pack, suit lights and magnetic boots. All parts hang off a simple rig so
- * procedural animation and customisation share one skeleton.
+ * Astronaut in an original exploration suit: soft fabric limbs with bellows
+ * joints, hard upper-torso shell, bubble helmet with gold visor, life-support
+ * pack, suit lights and boots. All parts hang off a simple rig so procedural
+ * animation and customisation share one skeleton.
  */
 
 export interface SuitColors {
@@ -18,7 +17,7 @@ export interface SuitColors {
   pack?: number;
 }
 
-export const DEFAULT_SUIT: SuitColors = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#16130e' };
+export const DEFAULT_SUIT: SuitColors = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#b8862a' };
 
 function fabricNormal(size = 128): THREE.DataTexture {
   const h = new Float32Array(size * size);
@@ -117,20 +116,22 @@ export interface Rig {
 export class Astronaut {
   readonly rig: Rig;
   readonly mats: { primary: THREE.MeshStandardMaterial; secondary: THREE.MeshStandardMaterial; accent: THREE.MeshStandardMaterial; visor: THREE.MeshStandardMaterial; light: THREE.MeshStandardMaterial; panel: THREE.MeshStandardMaterial; skin: THREE.MeshStandardMaterial };
-  readonly scale = 0.9;
+  readonly scale = 1;
+  /** standing hip height (m) used by the animator */
+  readonly hipY = 0.95;
 
   constructor(colors: SuitColors = DEFAULT_SUIT) {
     const fabric = fabricNormal();
-    const primary = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.72, metalness: 0.0, normalMap: fabric, normalScale: new THREE.Vector2(0.35, 0.35) });
-    const secondary = new THREE.MeshStandardMaterial({ color: colors.secondary, roughness: 0.48, metalness: 0.35 });
-    const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: 0.5, metalness: 0.05 });
-    const visor = new THREE.MeshStandardMaterial({ color: colors.visor, roughness: 0.04, metalness: 1.0, envMapIntensity: 1.6 });
+    const primary = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.78, metalness: 0.0, normalMap: fabric, normalScale: new THREE.Vector2(0.3, 0.3) });
+    const secondary = new THREE.MeshStandardMaterial({ color: colors.secondary, roughness: 0.5, metalness: 0.3 });
+    const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: 0.55, metalness: 0.05 });
+    const visor = new THREE.MeshStandardMaterial({ color: colors.visor, roughness: 0.03, metalness: 1.0, envMapIntensity: 1.8 });
     const light = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: new THREE.Color(0.55, 0.9, 1.0), emissiveIntensity: 40 });
     const panel = new THREE.MeshStandardMaterial({ map: chestPanelTexture(colors.accent), emissiveMap: chestEmissive(), emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 8, roughness: 0.45, metalness: 0.3 });
-    const skin = new THREE.MeshStandardMaterial({ color: '#c99a76', roughness: 0.8 });
+    const skin = new THREE.MeshStandardMaterial({ color: '#2a2e33', roughness: 0.6 });
     this.mats = { primary, secondary, accent, visor, light, panel, skin };
 
-    const box = (w: number, h: number, d: number, r = 0.035, seg = 2) => new RoundedBoxGeometry(w, h, d, seg, r);
+    const box = (w: number, h: number, d: number, r = 0.035, seg = 3) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 1e-3, h / 2 - 1e-3, d / 2 - 1e-3));
     const mesh = (g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0) => {
       const o = new THREE.Mesh(g, m);
       o.position.set(x, y, z);
@@ -143,132 +144,169 @@ export class Astronaut {
       g.position.set(x, y, z);
       return g;
     };
+    /** limb segment hanging from its joint: capsule of radius r and straight length len */
+    const limb = (r0: number, r1: number, len: number) => {
+      const prof: THREE.Vector2[] = [];
+      const n = 10;
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        // tapered capsule with a soft fabric bulge
+        const r = r0 + (r1 - r0) * t + Math.sin(t * Math.PI) * 0.008;
+        prof.push(new THREE.Vector2(r, -t * len));
+      }
+      prof.unshift(new THREE.Vector2(r0 * 0.6, r0 * 0.6), new THREE.Vector2(0.001, r0 * 0.95));
+      prof.push(new THREE.Vector2(r1 * 0.6, -len - r1 * 0.6), new THREE.Vector2(0.001, -len - r1 * 0.95));
+      return new THREE.LatheGeometry(prof.reverse(), 16);
+    };
+    /** accordion joint rings */
+    const bellows = (r: number, h: number, rings: number) => {
+      const prof: THREE.Vector2[] = [];
+      for (let i = 0; i <= rings * 4; i++) {
+        const t = i / (rings * 4);
+        prof.push(new THREE.Vector2(r * (1 + 0.07 * Math.cos(t * rings * Math.PI * 2)), h / 2 - t * h));
+      }
+      return new THREE.LatheGeometry(prof.reverse(), 16);
+    };
 
     const root = group();
     const inner = group();
     inner.scale.setScalar(this.scale);
     root.add(inner);
-    const hips = group(0, 0.86, 0);
+    const hips = group(0, this.hipY, 0);
     inner.add(hips);
 
-    // ----- torso
+    // ----- torso: lathed, flattened front-to-back
     const torso = group(0, 0, 0);
     hips.add(torso);
-    torso.add(mesh(box(0.52, 0.64, 0.3, 0.05), primary, 0, 0.33, 0));
-    // chest plate + panel
-    torso.add(mesh(box(0.42, 0.3, 0.06, 0.02), secondary, 0, 0.46, 0.15));
-    const panelMesh = mesh(new THREE.PlaneGeometry(0.22, 0.18), panel, 0.06, 0.46, 0.182);
+    const torsoProf: THREE.Vector2[] = [
+      [0.001, -0.06], [0.15, -0.05], [0.17, 0.02], [0.16, 0.14], [0.17, 0.26], [0.2, 0.38], [0.215, 0.48], [0.2, 0.56], [0.14, 0.62], [0.09, 0.64], [0.001, 0.645],
+    ].map(([x, y]) => new THREE.Vector2(x, y));
+    const torsoGeo = new THREE.LatheGeometry(torsoProf, 24);
+    torsoGeo.scale(1.12, 1, 0.72);
+    torso.add(mesh(torsoGeo, primary));
+    // hard upper torso shell + chest panel
+    const shell = box(0.36, 0.22, 0.1, 0.04);
+    torso.add(mesh(shell, secondary, 0, 0.44, 0.1));
+    const panelMesh = mesh(new THREE.PlaneGeometry(0.16, 0.12), panel, 0.05, 0.45, 0.151);
     torso.add(panelMesh);
-    // belt + accent stripes
-    torso.add(mesh(box(0.54, 0.09, 0.32, 0.02), secondary, 0, 0.04, 0));
-    torso.add(mesh(box(0.535, 0.03, 0.305, 0.01), accent, 0, 0.21, 0));
-    // shoulder pads
-    torso.add(mesh(box(0.2, 0.08, 0.32, 0.03), secondary, -0.31, 0.63, 0));
-    torso.add(mesh(box(0.2, 0.08, 0.32, 0.03), secondary, 0.31, 0.63, 0));
-    // collar ring
-    torso.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.06, 24), secondary, 0, 0.67, 0));
-    // hoses
-    const hose = new THREE.TorusGeometry(0.12, 0.022, 8, 16, Math.PI);
-    const h1 = mesh(hose, secondary, -0.16, 0.56, 0.08); h1.rotation.set(0, Math.PI / 2, Math.PI / 2); torso.add(h1);
-    const h2 = mesh(hose, secondary, 0.16, 0.56, 0.08); h2.rotation.set(0, Math.PI / 2, Math.PI / 2); torso.add(h2);
+    // waist ring, belt and accent band
+    torso.add(mesh(new THREE.TorusGeometry(0.165, 0.025, 8, 32).rotateX(Math.PI / 2).scale(1.1, 1, 0.75), secondary, 0, 0.03, 0));
+    torso.add(mesh(new THREE.TorusGeometry(0.19, 0.012, 6, 32).rotateX(Math.PI / 2).scale(1.12, 1, 0.74), accent, 0, 0.3, 0));
+    // neck ring
+    torso.add(mesh(new THREE.TorusGeometry(0.11, 0.03, 10, 32).rotateX(Math.PI / 2), secondary, 0, 0.635, 0));
+    // shoulder bearings
+    for (const sx of [-1, 1]) torso.add(mesh(new THREE.TorusGeometry(0.07, 0.022, 8, 20).rotateY(Math.PI / 2), secondary, sx * 0.235, 0.52, 0));
+    // life-support hoses from pack to chest
+    const hose = new THREE.TorusGeometry(0.13, 0.016, 8, 18, Math.PI * 0.9);
+    const h1 = mesh(hose, secondary, -0.12, 0.42, 0.02); h1.rotation.set(0, Math.PI / 2, Math.PI / 2.2); torso.add(h1);
+    const h2 = mesh(hose, secondary, 0.12, 0.42, 0.02); h2.rotation.set(0, Math.PI / 2, Math.PI / 2.2); torso.add(h2);
 
     // ----- backpack (life support)
-    const backpack = group(0, 0.36, -0.25);
+    const backpack = group(0, 0.36, -0.19);
     torso.add(backpack);
-    backpack.add(mesh(box(0.46, 0.56, 0.2, 0.04), primary, 0, 0, 0));
-    backpack.add(mesh(box(0.4, 0.14, 0.04, 0.015), secondary, 0, 0.15, -0.105));
-    backpack.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.46, 16), secondary, -0.15, 0, -0.09));
-    backpack.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.46, 16), secondary, 0.15, 0, -0.09));
-    backpack.add(mesh(box(0.47, 0.035, 0.21, 0.01), accent, 0, -0.2, 0));
+    backpack.add(mesh(box(0.36, 0.48, 0.16, 0.05), primary, 0, 0, 0));
+    backpack.add(mesh(box(0.3, 0.1, 0.03, 0.012), secondary, 0, 0.13, -0.085));
+    for (const tx of [-0.11, 0.11]) {
+      backpack.add(mesh(new THREE.CapsuleGeometry(0.05, 0.3, 4, 14), secondary, tx, -0.02, -0.08));
+    }
+    backpack.add(mesh(box(0.37, 0.03, 0.17, 0.01), accent, 0, -0.17, 0));
     const lights: THREE.Mesh[] = [];
-    for (const lx of [-0.15, 0.15]) {
-      const l = mesh(box(0.04, 0.04, 0.02, 0.01), light, lx, 0.24, -0.1);
+    for (const lx of [-0.12, 0.12]) {
+      const l = mesh(new THREE.SphereGeometry(0.016, 10, 8), light, lx, 0.2, -0.085);
       backpack.add(l);
       lights.push(l);
     }
 
-    const packB = group(0, 0.36, -0.27);
+    const packB = group(0, 0.36, -0.2);
     packB.visible = false;
     torso.add(packB);
-    packB.add(mesh(box(0.5, 0.62, 0.22, 0.05), primary, 0, 0, 0));
-    for (const tx of [-0.16, 0.16]) {
-      packB.add(mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.66, 16), secondary, tx, 0.02, -0.15));
-      packB.add(mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.05, 16), accent, tx, 0.3, -0.15));
+    packB.add(mesh(box(0.38, 0.52, 0.17, 0.06), primary, 0, 0, 0));
+    for (const tx of [-0.12, 0.12]) {
+      packB.add(mesh(new THREE.CapsuleGeometry(0.07, 0.42, 4, 16), secondary, tx, 0.02, -0.12));
+      packB.add(mesh(new THREE.TorusGeometry(0.072, 0.012, 6, 16).rotateX(Math.PI / 2), accent, tx, 0.24, -0.12));
     }
-    packB.add(mesh(box(0.3, 0.12, 0.08, 0.02), secondary, 0, -0.33, -0.08));
-    packB.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.4, 6), secondary, 0.2, 0.5, -0.05));
-    const lb = mesh(box(0.05, 0.05, 0.02, 0.01), light, 0, 0.22, -0.12);
+    packB.add(mesh(box(0.24, 0.1, 0.07, 0.02), secondary, 0, -0.28, -0.06));
+    packB.add(mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.36, 6), secondary, 0.16, 0.42, -0.04));
+    const lb = mesh(new THREE.SphereGeometry(0.02, 10, 8), light, 0, 0.2, -0.09);
     packB.add(lb);
     lights.push(lb);
 
     // ----- head / helmet
-    const head = group(0, 0.68, 0);
+    const head = group(0, 0.64, 0);
     torso.add(head);
-    const skull = mesh(box(0.44, 0.44, 0.44, 0.03), skin, 0, 0.27, 0);
-    head.add(skull);
-    // helmet A: classic rounded cube with flat visor
+    head.add(mesh(new THREE.SphereGeometry(0.1, 16, 12), skin, 0, 0.16, 0.0));
+    // helmet A: bubble helmet with gold visor and lamp pods
     const helmetA = group();
     head.add(helmetA);
-    const helmet = mesh(box(0.54, 0.52, 0.54, 0.08, 3), primary, 0, 0.27, 0);
+    const helmet = mesh(new THREE.SphereGeometry(0.165, 32, 24), primary, 0, 0.17, -0.005);
+    helmet.scale.set(1, 1.04, 1.02);
     helmetA.add(helmet);
-    const visorMesh = mesh(box(0.44, 0.3, 0.04, 0.02), visor, 0, 0.29, 0.258);
+    const visorGeo = new THREE.SphereGeometry(0.168, 32, 20, Math.PI / 2 - Math.PI * 0.36, Math.PI * 0.72, Math.PI * 0.26, Math.PI * 0.42);
+    const visorMesh = mesh(visorGeo, visor, 0, 0.17, 0);
+    visorMesh.scale.set(1.01, 1.05, 1.03);
     helmetA.add(visorMesh);
-    helmetA.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.455, 0.255));
-    helmetA.add(mesh(box(0.5, 0.04, 0.04, 0.015), secondary, 0, 0.125, 0.255));
-    helmetA.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, -0.27, 0.27, 0));
-    helmetA.add(mesh(box(0.06, 0.18, 0.56, 0.02), secondary, 0.27, 0.27, 0));
-    helmetA.add(mesh(box(0.556, 0.03, 0.2, 0.01), accent, 0, 0.53, -0.1));
-    for (const lx of [-0.29, 0.29]) {
-      const l = mesh(box(0.03, 0.05, 0.08, 0.01), light, lx, 0.3, 0.18);
+    // crown stripe, side lamps, antenna
+    const crown = mesh(new THREE.TorusGeometry(0.168, 0.012, 6, 40, Math.PI).rotateY(Math.PI / 2), accent, 0, 0.17, 0);
+    helmetA.add(crown);
+    for (const lx of [-1, 1]) {
+      helmetA.add(mesh(box(0.04, 0.05, 0.08, 0.015), secondary, lx * 0.16, 0.2, 0.03));
+      const l = mesh(new THREE.CircleGeometry(0.014, 12), light, lx * 0.16, 0.2, 0.072);
       helmetA.add(l);
       lights.push(l);
     }
-    helmetA.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 6), secondary, -0.2, 0.62, -0.15));
-    // helmet B: expedition helmet with wraparound visor, crest and lamp bar
+    helmetA.add(mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.16, 6), secondary, -0.11, 0.37, -0.08));
+    // helmet B: expedition helmet, wraparound dark visor and lamp bar
     const helmetB = group();
     helmetB.visible = false;
     head.add(helmetB);
-    helmetB.add(mesh(box(0.56, 0.54, 0.56, 0.1, 3), primary, 0, 0.28, 0));
-    helmetB.add(mesh(box(0.5, 0.26, 0.5, 0.06), visor, 0, 0.3, 0.05));
-    helmetB.add(mesh(box(0.12, 0.08, 0.5, 0.03), secondary, 0, 0.58, -0.02));
-    helmetB.add(mesh(box(0.58, 0.05, 0.3, 0.02), accent, 0, 0.15, -0.14));
-    const bar = mesh(box(0.3, 0.04, 0.04, 0.01), light, 0, 0.5, 0.27);
+    const hb = mesh(new THREE.CapsuleGeometry(0.155, 0.06, 8, 24), primary, 0, 0.18, -0.01);
+    hb.scale.set(1.05, 1, 1.08);
+    helmetB.add(hb);
+    const visB = mesh(new THREE.SphereGeometry(0.17, 32, 16, Math.PI / 2 - Math.PI * 0.45, Math.PI * 0.9, Math.PI * 0.3, Math.PI * 0.33), visor, 0, 0.18, 0);
+    visB.scale.set(1.04, 1.1, 1.08);
+    helmetB.add(visB);
+    helmetB.add(mesh(box(0.06, 0.05, 0.3, 0.02), secondary, 0, 0.35, -0.02));
+    const bar = mesh(box(0.16, 0.025, 0.03, 0.01), light, 0, 0.31, 0.15);
     helmetB.add(bar);
     lights.push(bar);
-    helmetB.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 6), secondary, 0.22, 0.66, -0.18));
+    helmetB.add(mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.24, 6), secondary, 0.12, 0.4, -0.1));
 
     // ----- arms
     const makeArm = (side: number) => {
-      const shoulder = group(side * 0.335, 0.58, 0);
+      const shoulder = group(side * 0.25, 0.52, 0);
       torso.add(shoulder);
-      shoulder.add(mesh(box(0.16, 0.36, 0.17, 0.03), primary, 0, -0.16, 0));
-      shoulder.add(mesh(box(0.17, 0.035, 0.18, 0.01), accent, 0, -0.06, 0));
-      const elbow = group(0, -0.34, 0);
+      shoulder.add(mesh(new THREE.SphereGeometry(0.075, 16, 12), primary, 0, -0.01, 0));
+      shoulder.add(mesh(limb(0.066, 0.058, 0.25), primary, 0, -0.03, 0));
+      shoulder.add(mesh(new THREE.TorusGeometry(0.064, 0.008, 6, 20).rotateX(Math.PI / 2), accent, 0, -0.1, 0));
+      const elbow = group(0, -0.31, 0);
       shoulder.add(elbow);
-      elbow.add(mesh(box(0.165, 0.08, 0.175, 0.03), secondary, 0, 0, 0));
-      elbow.add(mesh(box(0.155, 0.24, 0.165, 0.03), primary, 0, -0.14, 0));
-      // wrist cuff + glove
-      elbow.add(mesh(box(0.17, 0.05, 0.18, 0.015), secondary, 0, -0.27, 0));
-      const hand = group(0, -0.33, 0);
+      elbow.add(mesh(bellows(0.058, 0.07, 3), secondary, 0, 0, 0));
+      elbow.add(mesh(limb(0.056, 0.048, 0.2), primary, 0, -0.04, 0));
+      // wrist ring + glove
+      elbow.add(mesh(new THREE.TorusGeometry(0.05, 0.014, 8, 20).rotateX(Math.PI / 2), secondary, 0, -0.27, 0));
+      const hand = group(0, -0.31, 0);
       elbow.add(hand);
-      hand.add(mesh(box(0.165, 0.13, 0.18, 0.035), secondary, 0, -0.02, 0.005));
+      hand.add(mesh(box(0.085, 0.1, 0.07, 0.03), secondary, 0, -0.02, 0.0));
+      hand.add(mesh(box(0.02, 0.06, 0.03, 0.01), secondary, -side * 0.05, -0.0, 0.025));
       return { shoulder, elbow, hand };
     };
     const aL = makeArm(-1), aR = makeArm(1);
 
     // ----- legs
     const makeLeg = (side: number) => {
-      const hip = group(side * 0.13, 0.0, 0);
+      const hip = group(side * 0.1, -0.02, 0);
       hips.add(hip);
-      hip.add(mesh(box(0.21, 0.42, 0.23, 0.03), primary, 0, -0.21, 0));
-      hip.add(mesh(box(0.215, 0.035, 0.235, 0.01), accent, 0, -0.1, 0));
-      const knee = group(0, -0.42, 0);
+      hip.add(mesh(limb(0.09, 0.075, 0.38), primary, 0, -0.02, 0));
+      hip.add(mesh(new THREE.TorusGeometry(0.083, 0.009, 6, 20).rotateX(Math.PI / 2), accent, 0, -0.16, 0));
+      const knee = group(0, -0.45, 0);
       hip.add(knee);
-      knee.add(mesh(box(0.215, 0.09, 0.24, 0.03), secondary, 0, 0, 0.005));
-      knee.add(mesh(box(0.2, 0.28, 0.22, 0.03), primary, 0, -0.16, 0));
-      // boot
-      knee.add(mesh(box(0.23, 0.13, 0.33, 0.035), secondary, 0, -0.37, 0.04));
-      knee.add(mesh(box(0.235, 0.025, 0.335, 0.01), accent, 0, -0.43, 0.04));
+      knee.add(mesh(bellows(0.074, 0.08, 3), secondary, 0, 0, 0));
+      knee.add(mesh(limb(0.07, 0.06, 0.32), primary, 0, -0.04, 0));
+      // boot: shaped upper, sole and toe cap
+      const boot = mesh(box(0.13, 0.13, 0.27, 0.05), secondary, 0, -0.43, 0.04);
+      knee.add(boot);
+      knee.add(mesh(box(0.135, 0.03, 0.28, 0.012), accent, 0, -0.485, 0.04));
+      knee.add(mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.1, 16), primary, 0, -0.36, 0));
       return { hip, knee };
     };
     const lL = makeLeg(-1), lR = makeLeg(1);
@@ -372,7 +410,7 @@ export class AstronautAnimator {
     r.elbowR.rotation.x = -(0.15 + 0.5 * this.blendRun) * walkAmt;
     // torso
     const breathe = Math.sin(this.t * 1.6) * 0.008;
-    r.hips.position.y = 0.86 + Math.abs(Math.sin(this.phase)) * 0.04 * walkAmt + crouch * 0.5 + breathe;
+    r.hips.position.y = this.a.hipY + Math.abs(Math.sin(this.phase)) * 0.04 * walkAmt + crouch * 0.5 + breathe;
     r.torso.rotation.x = 0.08 * this.blendRun * walkAmt + breathe;
     r.torso.rotation.y = sw * 0.06 * walkAmt;
     r.head.rotation.x = -s.lookPitch * 0.6;
@@ -413,7 +451,7 @@ export class AstronautAnimator {
     if (s.seated) {
       r.legL.rotation.x = -1.4; r.legR.rotation.x = -1.4;
       r.kneeL.rotation.x = 1.4; r.kneeR.rotation.x = 1.4;
-      r.hips.position.y = 0.55;
+      r.hips.position.y = this.a.hipY * 0.62;
       r.armL.rotation.x = -0.9; r.armR.rotation.x = -0.9;
       r.elbowL.rotation.x = -0.6; r.elbowR.rotation.x = -0.6;
     }

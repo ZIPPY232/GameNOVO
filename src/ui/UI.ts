@@ -656,7 +656,7 @@ export class UI {
       primary: ['#e9e7e2', '#cfd4da', '#f2efe6', '#9aa3ad', '#2e3238', '#c7b79a', '#a33a2a', '#2f5a7a'],
       secondary: ['#3b3f45', '#1f2226', '#5a5f66', '#6b4f39', '#2a3a4a', '#4a2a2a'],
       accent: ['#ea7a2c', '#3fb7ff', '#7dffb0', '#ffd166', '#ff5a6e', '#c49bff', '#ffffff'],
-      visor: ['#16130e', '#0a1016', '#2a1a05', '#061a12', '#20101a'],
+      visor: ['#b8862a', '#16130e', '#0a1016', '#5a6a7a', '#20101a'],
     };
     const labels: Record<string, string> = { primary: 'Cor principal', secondary: 'Cor secundária', accent: 'Detalhes', visor: 'Visor' };
     const variant = (label: string, key: 'helmet' | 'pack', names: string[]) => {

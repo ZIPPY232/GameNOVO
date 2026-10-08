@@ -564,7 +564,7 @@ export class Game {
     return true;
   }
 
-  suit: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number } = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#16130e', helmet: 0, pack: 0 };
+  suit: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number } = { primary: '#e9e7e2', secondary: '#3b3f45', accent: '#ea7a2c', visor: '#b8862a', helmet: 0, pack: 0 };
 
   async saveGame(silent = false): Promise<void> {
     if (this.mode !== 'onfoot' && this.mode !== 'ship') return;

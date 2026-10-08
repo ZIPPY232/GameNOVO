@@ -48,13 +48,12 @@ export function generateTextures(size: number): TextureSet {
       for (let x = 0; x < size; x++) {
         const u = (x + 0.5) / size, v = (y + 0.5) / size;
         shade(m, nz, u, v, out, l);
-        // bevel
+        // bevel only on built panels: natural layers tile seamlessly (triplanar terrain)
         const e = Math.min(u, 1 - u, v, 1 - v);
         const panel = m.pattern === 'metal' || m.pattern === 'hull' || m.pattern === 'concrete' || m.pattern === 'floor' || m.pattern === 'lamp' || m.pattern === 'glass';
-        const bw = panel ? 0.05 : 0.04;
-        const bevel = 1 - smooth(0, bw, e);
-        out.h -= bevel * (panel ? 0.5 : 0.35);
-        const cav = 1 - bevel * (panel ? 0.25 : 0.18);
+        const bevel = panel ? 1 - smooth(0, 0.05, e) : 0;
+        out.h -= bevel * 0.5;
+        const cav = 1 - bevel * 0.25;
         const i = base + (x + y * size) * 4;
         albedo[i] = Math.round(clamp01(out.r * cav) * 255);
         albedo[i + 1] = Math.round(clamp01(out.g * cav) * 255);
@@ -110,24 +109,29 @@ function shade(m: LayerMaterial, n: TileNoise2, u: number, v: number, o: Texel, 
   switch (m.pattern) {
     case 'rock':
     case 'bedrock': {
-      const f = n.fbm(u, v, 4, 5);
-      const [f1, f2] = n.worley(u, v, 5);
-      const crack = 1 - smooth(0.0, 0.06, f2 - f1);
-      t = clamp01(0.5 + f * 0.9);
-      setMix(t * 0.7);
-      h = f * 0.6 + (1 - f1) * 0.3 - crack * 0.6;
-      scale(1 - crack * 0.35 + n.fbm(u, v, 32, 2) * 0.08);
-      rough = m.roughness + crack * 0.1;
+      // weathered stone: broad tonal blotches, faint strata, sparse fine fractures, grit
+      const f = n.fbm(u, v, 3, 6);
+      const g2 = n.fbm(u, v, 12, 3);
+      const strata = Math.sin((v + f * 0.12) * Math.PI * 2 * 3) * 0.5 + 0.5;
+      const [f1, f2] = n.worley(u, v, 3);
+      const crack = (1 - smooth(0.0, 0.018, f2 - f1)) * smooth(0.2, 0.6, n.fbm(u, v, 5, 2) * 0.5 + 0.5);
+      t = clamp01(0.5 + f * 1.1 + strata * 0.15);
+      setMix(t * 0.75);
+      h = f * 0.7 + g2 * 0.25 + strata * 0.1 - crack * 0.5;
+      scale(0.9 + g2 * 0.12 - crack * 0.25 + n.fbm(u, v, 48, 2) * 0.06);
+      rough = m.roughness + crack * 0.08;
       break;
     }
     case 'basalt': {
-      const [f1, f2] = n.worley(u, v, 3);
-      const edge = 1 - smooth(0.0, 0.08, f2 - f1);
-      const f = n.fbm(u, v, 8, 4);
-      setMix(clamp01(0.4 + f));
-      h = 0.6 - edge * 0.8 + f * 0.25;
-      scale(1 - edge * 0.45);
-      rough = m.roughness - (1 - edge) * 0.1;
+      // dark volcanic rock: vesicles and flow texture
+      const f = n.fbm(u, v, 4, 5);
+      const flow = n.fbm(u * 0.5, v * 2, 6, 3);
+      const [p1] = n.worley(u, v, 18);
+      const pore = 1 - smooth(0.02, 0.08, p1);
+      setMix(clamp01(0.4 + f + flow * 0.3));
+      h = 0.5 + f * 0.4 + flow * 0.2 - pore * 0.5;
+      scale(0.95 - pore * 0.35 + flow * 0.06);
+      rough = m.roughness + pore * 0.1;
       break;
     }
     case 'soil':
@@ -147,13 +151,19 @@ function shade(m: LayerMaterial, n: TileNoise2, u: number, v: number, o: Texel, 
       break;
     }
     case 'moss': {
-      const f = n.fbm(u, v, 5, 5);
-      const fib = n.fbm(u, v, 48, 2);
-      const [c1] = n.worley(u, v, 7);
-      setMix(clamp01(0.5 - f * 0.8));
-      h = f * 0.4 + fib * 0.25 + (1 - c1) * 0.35;
-      scale(0.85 + (1 - c1) * 0.25 + fib * 0.12);
-      tint = 1;
+      // ground cover: dense short growth with dry patches and bare earth showing through
+      const f = n.fbm(u, v, 4, 5);
+      const blades = n.fbm(u, v, 64, 2);
+      const clumps = n.fbm(u, v, 14, 3);
+      const bare = smooth(0.35, 0.6, n.fbm(u, v, 3, 4) * 0.5 + 0.5) * 0.55;
+      setMix(clamp01(0.5 - f * 0.8 + clumps * 0.3));
+      h = f * 0.3 + blades * 0.35 + clumps * 0.25;
+      scale(0.8 + blades * 0.25 + clumps * 0.12);
+      // earth showing through (untinted)
+      const soilC = [0.36, 0.28, 0.2];
+      r = mix(r, soilC[0], bare * 0.6); g = mix(g, soilC[1], bare * 0.6); b = mix(b, soilC[2], bare * 0.6);
+      tint = 1 - bare * 0.7;
+      rough = m.roughness + bare * 0.05;
       break;
     }
     case 'moss_side':

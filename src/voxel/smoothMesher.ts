@@ -50,6 +50,30 @@ const C = PAD - 1; // cubes per axis (min corner padded 0..C-1)
 const EDGES: [number, number][] = [];
 for (let a = 0; a < 8; a++) for (const bit of [1, 2, 4]) if (!(a & bit)) EDGES.push([a, a | bit]);
 
+/** shell of sample offsets (padded-grid units) for ambient occlusion */
+const AO_DIRS: number[] = [];
+{
+  const r = 1.4;
+  for (const [x, y, z] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) AO_DIRS.push(x * r, y * r, z * r);
+  const d = r / Math.sqrt(3);
+  for (let i = 0; i < 8; i++) AO_DIRS.push((i & 1 ? 1 : -1) * d, (i & 2 ? 1 : -1) * d, (i & 4 ? 1 : -1) * d);
+}
+
+/** trilinear field at continuous padded coordinates (clamped to the padded block) */
+function sampleF(F: Float32Array, x: number, y: number, z: number): number {
+  const m = PAD - 1.0001;
+  x = Math.min(m, Math.max(0, x)); y = Math.min(m, Math.max(0, y)); z = Math.min(m, Math.max(0, z));
+  const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z);
+  const tx = x - i, ty = y - j, tz = z - k;
+  const o = i + j * PAD + k * PAD2;
+  const c000 = F[o], c100 = F[o + 1], c010 = F[o + PAD], c110 = F[o + 1 + PAD];
+  const c001 = F[o + PAD2], c101 = F[o + 1 + PAD2], c011 = F[o + PAD + PAD2], c111 = F[o + 1 + PAD + PAD2];
+  const x00 = c000 + (c100 - c000) * tx, x10 = c010 + (c110 - c010) * tx;
+  const x01 = c001 + (c101 - c001) * tx, x11 = c011 + (c111 - c011) * tx;
+  const y0 = x00 + (x10 - x00) * ty, y1 = x01 + (x11 - x01) * ty;
+  return y0 + (y1 - y0) * tz;
+}
+
 export function meshSmooth(inp: SmoothInput): SmoothBuffers | null {
   const { face, cx, cy, cz, N, baseRadius, vox, dens, topExt, origin } = inp;
   const I0 = cx * CHUNK, J0 = cy * CHUNK, K0 = cz * CHUNK;
@@ -136,16 +160,13 @@ export function meshSmooth(inp: SmoothInput): SmoothBuffers | null {
       if (cv[c] > bestV) { bestV = cv[c]; best = b; }
     }
     if (best < 0) best = B.ROCK;
-    // ambient occlusion: solidity of the 4x4x4 neighbourhood (flat ground ~ 0.5)
-    let occ = 0, on = 0;
-    for (let kz = -1; kz <= 2; kz++) for (let ky = -1; ky <= 2; ky++) for (let kx = -1; kx <= 2; kx++) {
-      const X = x + kx, Y = y + ky, Z = z + kz;
-      if (X < 0 || Y < 0 || Z < 0 || X >= PAD || Y >= PAD || Z >= PAD) continue;
-      occ += F[X + Y * PAD + Z * PAD2] >= 0.5 ? 1 : F[X + Y * PAD + Z * PAD2] * 2 * 0.5;
-      on++;
-    }
-    occ /= on;
-    const ao = Math.max(0.18, Math.min(1, 1 - (occ - 0.42) * 2.1));
+    // ambient occlusion: mean field on a shell around the vertex (flat ground = 0.5,
+    // creases higher); sampled continuously so it does not band with height
+    const vx = x + ax, vy = y + ay, vz = z + az;
+    let occ = 0;
+    for (let k = 0; k < AO_DIRS.length; k += 3) occ += sampleF(F, vx + AO_DIRS[k], vy + AO_DIRS[k + 1], vz + AO_DIRS[k + 2]);
+    occ /= AO_DIRS.length / 3;
+    const ao = Math.max(0.22, Math.min(1, 1 - (occ - 0.5) * 2.6));
     // sky exposure from the natural column top
     const colTop = topExt[Math.min(PAD - 1, x + (ax > 0.5 ? 1 : 0)) + Math.min(PAD - 1, y + (ay > 0.5 ? 1 : 0)) * PAD];
     const K = K0 + z - 1 + az;
