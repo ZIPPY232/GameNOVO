@@ -51,6 +51,8 @@ export interface ShipHudState {
   altLabel: string;
   throttle: number;
   fuel: number;
+  /** explorer mode: unlimited resources */
+  unlimited?: boolean;
   hull: number;
   hullTemp: number;
   power: boolean;
@@ -344,13 +346,14 @@ export class HUD {
       e[k + 'F'].style.transform = `scaleX(${Math.max(0, Math.min(1, v)).toFixed(3)})`;
       this.set('g' + k, e[k + 'V'], txt);
     };
-    g('fuel', s.fuel / 100, `${s.fuel.toFixed(1)}%`);
+    g('fuel', s.fuel / 100, s.unlimited ? 'ILIMITADO' : `${s.fuel.toFixed(1)}%`);
     g('hull', s.hull / 100, `${Math.round(s.hull)}%`);
     g('temp', (s.hullTemp - 20) / 1400, `${Math.round(s.hullTemp)}°C`);
     const st = (on: boolean, a: string, b: string, mid = false) => `<span class="${mid ? 'mid' : on ? 'on' : 'off'}">● ${on ? a : b}</span>`;
     this.set('st', e.status, [
       st(s.power, 'ENERGIA', 'SEM ENERGIA'), st(s.thrusters, 'PROPULSORES', 'PROPULSORES AVARIADOS'), st(s.engine, 'MOTOR LIGADO', 'MOTOR DESLIGADO (R)'),
       st(s.assist, 'ASSISTÊNCIA', 'ASSIST. OFF (Z)', !s.assist), st(s.gear, 'TREM BAIXADO', 'TREM RECOLHIDO (X)', !s.gear),
+      s.unlimited ? '<span class="on">● MODO EXPLORADOR</span>' : '',
     ].join(''), true);
     this.set('land', e.land, s.landing ?? '', true);
     // nav marker

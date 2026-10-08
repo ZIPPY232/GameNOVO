@@ -54,6 +54,11 @@ const OBJECTIVES: Objective[] = [
   { id: 'free', title: 'Exploração livre', hint: 'O universo é seu: construa bases, catalogue mundos e descubra o que existe entre as estrelas.', done: () => false },
 ];
 
+/** index of an objective (e.g. to start explorer mode at 'board') */
+export function objectiveIndex(id: string): number {
+  return Math.max(0, OBJECTIVES.findIndex((o) => o.id === id));
+}
+
 export class Campaign {
   stage = 0;
   completed: string[] = [];

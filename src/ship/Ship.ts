@@ -58,12 +58,24 @@ export class Ship {
   cruiseCharge = 0;
   cruiseSpeed = 0;
   heat = 0;
+  /** Modo Explorador: systems always online, no fuel use, no damage */
+  unlimited = false;
   readonly cargo = new Inventory(16);
   name = 'Arandu';
   /** visual damage smoke while not repaired */
   get damaged(): boolean {
     return !this.powerOnline || !this.thrustersOnline || this.hull < 50;
   }
+  /** keep every system topped up (explorer mode) */
+  private topUp(): void {
+    this.hull = 100;
+    this.fuel = 100;
+    this.powerOnline = true;
+    this.thrustersOnline = true;
+    this.o2Reserve = 800;
+    this.energyReserve = 1000;
+  }
+
   get canFly(): boolean {
     return this.powerOnline && this.thrustersOnline && this.hull > 20 && this.fuel > 0;
   }
@@ -83,6 +95,7 @@ export class Ship {
   }
 
   update(dt: number, c: ShipControls, env: ShipEnv): { thrust: number; accel: THREE.Vector3 } {
+    if (this.unlimited) this.topUp();
     const accel = new THREE.Vector3();
     const flying = this.engineOn && this.canFly;
     const hasGrav = env.gravity.lengthSq() > 1e-6;

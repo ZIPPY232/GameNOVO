@@ -127,17 +127,30 @@ export class UI {
 
   private newGameModal(hasSave: boolean): void {
     const g = this.game;
-    let full = false;
+    type Mode = 'explorer' | 'standard' | 'full';
+    let mode = 'standard' as Mode;
     const body = h('div');
-    body.innerHTML = `<p>Você desperta após um pouso de emergência numa lua desconhecida. A nave está danificada; o ar é rarefeito. Repare os sistemas, alcance a órbita e descubra o que existe além.</p>`;
+    const intro = h('p');
+    const texts = {
+      explorer: 'Modo Explorador: a nave já está consertada e abastecida, nunca gasta combustível nem sofre danos, e o salto entre estrelas é livre. O traje não consome oxigênio nem energia. Ideal para voar e explorar à vontade.',
+      standard: 'Você desperta após um pouso de emergência numa lua desconhecida. A nave está danificada; o ar é rarefeito. Repare os sistemas, alcance a órbita e descubra o que existe além.',
+      full: 'Sobrevivência completa: como o modo Padrão, mas também é preciso comer e beber para manter a nutrição e a hidratação.',
+    };
+    intro.textContent = texts[mode];
+    body.appendChild(intro);
     const row = h('div', 'row');
-    row.innerHTML = '<label>Modo de sobrevivência</label>';
+    row.innerHTML = '<label>Modo de jogo</label>';
     const seg = h('div', 'seg');
-    const b1 = h('button', 'on', 'Padrão') as HTMLButtonElement;
-    const b2 = h('button', '', 'Completo (fome e sede)') as HTMLButtonElement;
-    b1.onclick = () => { full = false; b1.classList.add('on'); b2.classList.remove('on'); };
-    b2.onclick = () => { full = true; b2.classList.add('on'); b1.classList.remove('on'); };
-    seg.append(b1, b2);
+    const opts: [Mode, string][] = [['explorer', 'Explorador (fácil)'], ['standard', 'Padrão'], ['full', 'Completo (fome e sede)']];
+    for (const [id, label] of opts) {
+      const b = h('button', id === mode ? 'on' : '', label) as HTMLButtonElement;
+      b.onclick = () => {
+        mode = id;
+        seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        intro.textContent = texts[mode];
+      };
+      seg.appendChild(b);
+    }
     row.appendChild(seg);
     body.appendChild(row);
     if (hasSave) body.appendChild(h('p', '', '<span style="color:var(--amber)">Atenção: o salvamento atual será substituído.</span>'));
@@ -148,7 +161,7 @@ export class UI {
           this.closeModal();
           this.hideMenu();
           this.loading(true, 0.05, 'Preparando…');
-          await g.newGame(full, (p, m) => this.loading(true, p, m));
+          await g.newGame(mode === 'full', (p, m) => this.loading(true, p, m), mode === 'explorer');
           this.loading(false);
           g.input.lock();
         },
@@ -210,6 +223,10 @@ export class UI {
     };
     b('Retomar', () => this.resume(), true);
     b('Salvar jogo', () => void g.saveGame());
+    b(`Modo Explorador: ${g.vitals.explorer ? 'LIGADO' : 'DESLIGADO'}`, () => {
+      g.setExplorer(!g.vitals.explorer);
+      this.openPause();
+    });
     b('Configurações', () => { this.paused = false; this.settingsModal(true); });
     b('Controles', () => { this.paused = false; this.controlsModal(true); });
     b('Salvar e voltar ao menu', () => g.quitToMenu());

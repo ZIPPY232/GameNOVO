@@ -11,7 +11,7 @@ import { Pilot, fmtDist } from './Pilot';
 import { Vitals, type Environment } from '../survival/Vitals';
 import { Inventory } from '../items/Inventory';
 import { MachineSystem, type Machine, type MachineData } from '../building/Machines';
-import { Campaign } from '../campaign/Campaign';
+import { Campaign, objectiveIndex } from '../campaign/Campaign';
 import { SaveSystem, SAVE_VERSION, type SaveDoc, type DiscoveryEntry } from '../save/SaveSystem';
 import { WeatherParticles } from '../weather/Weather';
 import { item, type MachineType } from '../items/items';
@@ -321,7 +321,7 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ new game / load
-  async newGame(fullSurvival: boolean, progress: (p: number, msg: string) => void): Promise<void> {
+  async newGame(fullSurvival: boolean, progress: (p: number, msg: string) => void, explorer = false): Promise<void> {
     this.mode = 'boot';
     await this.save.deleteSlot(SLOT);
     this.universe.edits.clear();
@@ -335,7 +335,7 @@ export class Game {
     this.knownPois.clear();
     this.lootedPois.clear();
     this.campaign.load({});
-    this.vitals.load({ health: 100, oxygen: 100, energy: 85, bodyTemp: 37, integrity: 78, radiation: 0, food: 80, water: 70, fullSurvival, upgrades: {} });
+    this.vitals.load({ health: 100, oxygen: 100, energy: 85, bodyTemp: 37, integrity: 78, radiation: 0, food: 80, water: 70, fullSurvival, explorer, upgrades: {} });
     this.inventory.load([]);
     for (const [id, n] of [['extractor', 1], ['builder', 1], ['scanner', 1], ['flashlight', 1], ['o2_canister', 2], ['battery', 1]] as const) this.inventory.add(id, n);
     const u = this.universe;
@@ -358,11 +358,20 @@ export class Game {
     ship.pos.copy(shipDir).multiplyScalar(shipR + 1.75);
     const fwd = tangent.clone().cross(shipDir).normalize();
     ship.quat.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(shipDir, fwd.clone().negate()).normalize(), shipDir, fwd.clone().negate()));
-    ship.quat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.08, 0.6, 0.1)));
+    if (explorer) {
+      // explorer mode: intact ship standing on its gear, every system online
+      ship.pos.copy(shipDir).multiplyScalar(focus.surfaceRadius(shipDir) + 2.06);
+      Object.assign(ship, { hull: 100, fuel: 100, powerOnline: true, thrustersOnline: true, engineOn: false, warpCore: true, o2Reserve: 800, energyReserve: 1000, landed: true, gearDown: true, gearT: 1, cruise: false, hullTemp: 20, assist: true });
+      ship.cargo.load([]);
+      this.campaign.load({ stage: objectiveIndex('board') });
+    } else {
+      ship.quat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.08, 0.6, 0.1)));
+      Object.assign(ship, { hull: 34, fuel: 42, powerOnline: false, thrustersOnline: false, engineOn: false, warpCore: false, o2Reserve: 500, energyReserve: 300, landed: true, gearDown: true, gearT: 1, cruise: false, hullTemp: 20, assist: true });
+      ship.cargo.load([]);
+      ship.cargo.add('rock', 12);
+    }
     ship.vel.set(0, 0, 0);
-    Object.assign(ship, { hull: 34, fuel: 42, powerOnline: false, thrustersOnline: false, engineOn: false, warpCore: false, o2Reserve: 500, energyReserve: 300, landed: true, gearDown: true, gearT: 1, cruise: false, hullTemp: 20, assist: true });
-    ship.cargo.load([]);
-    ship.cargo.add('rock', 12);
+    ship.unlimited = explorer;
     this.pilot.cockpitView = true;
     // player a few metres off the port bow, looking back at the wreck
     const spot = ship.localToFrame(new THREE.Vector3(-8.5, 0, -5.5));
@@ -385,9 +394,14 @@ export class Game {
     this.renderer.resetExposure();
     this.audio.init();
     this.restoreFov();
-    this.hud.centerMessage('Pouso de emergência', 'Sistemas do traje reiniciados', 5);
-    setTimeout(() => this.toast('Diagnóstico: casco 34% · energia OFFLINE · propulsor avariado', 'var(--amber)'), 2500);
-    setTimeout(() => this.toast(`Atmosfera ${moon.def.atmosphere?.composition} — respirabilidade limitada`, 'var(--cyan)'), 4500);
+    if (explorer) {
+      this.hud.centerMessage('Modo Explorador', 'Nave pronta · sem consumo de recursos', 5);
+      setTimeout(() => this.toast('Entre na nave com E e ligue os motores com R', 'var(--cyan)'), 2500);
+    } else {
+      this.hud.centerMessage('Pouso de emergência', 'Sistemas do traje reiniciados', 5);
+      setTimeout(() => this.toast('Diagnóstico: casco 34% · energia OFFLINE · propulsor avariado', 'var(--amber)'), 2500);
+    }
+    if (!explorer) setTimeout(() => this.toast(`Atmosfera ${moon.def.atmosphere?.composition} — respirabilidade limitada`, 'var(--cyan)'), 4500);
     this.autosaveT = 20;
     await this.saveGame(true);
   }
@@ -670,6 +684,7 @@ export class Game {
     u.updateFocus(u.system.posToSystem(u.frame, ctlPos, new THREE.Vector3()));
 
     // ---------------------------------------------------- entities
+    ship.unlimited = this.vitals.explorer;
     if (this.mode === 'ship') {
       this.pilot.update(dt, controls);
       this.player.pos.copy(ship.localToFrame(ShipModel.EYE));
@@ -1096,12 +1111,13 @@ export class Game {
     const s = this.pilot.ship;
     const u = this.universe;
     if (this.mode !== 'ship' || this.warpState) return;
-    if (!s.warpCore) { this.toast('Núcleo de Dobra não instalado', 'var(--red)'); this.audio.ui('error'); return; }
+    const free = this.vitals.explorer;
+    if (!s.warpCore && !free) { this.toast('Núcleo de Dobra não instalado', 'var(--red)'); this.audio.ui('error'); return; }
     if (!this.jumpTarget) { this.toast('Defina um destino no Mapa Galáctico (G)', 'var(--amber)'); this.audio.ui('error'); return; }
-    if (!this.inventory.has('warp_cell') && !s.cargo.has('warp_cell')) { this.toast('Sem Células de Dobra', 'var(--red)'); this.audio.ui('error'); return; }
+    if (!free && !this.inventory.has('warp_cell') && !s.cargo.has('warp_cell')) { this.toast('Sem Células de Dobra', 'var(--red)'); this.audio.ui('error'); return; }
     if (u.frame && this.pilot.altitude < (u.frame.def.atmosphere?.height ?? 0) + 2500) { this.toast('Afaste-se mais do planeta para saltar', 'var(--amber)'); this.audio.ui('error'); return; }
     if (!s.engineOn) { this.toast('Ligue os motores', 'var(--amber)'); return; }
-    if (!this.inventory.remove('warp_cell', 1)) s.cargo.remove('warp_cell', 1);
+    if (!free && !this.inventory.remove('warp_cell', 1)) s.cargo.remove('warp_cell', 1);
     this.mode = 'warp';
     this.warpState = 'CARREGANDO DOBRA';
     this.warpT = 0;
@@ -1502,6 +1518,18 @@ export class Game {
   setSuit(c: { primary: string; secondary: string; accent: string; visor: string; helmet?: number; pack?: number }): void {
     this.suit = { ...c };
     this.player.model.setColors(c);
+  }
+
+  /** Toggle explorer mode mid-game: free ship (no fuel, no damage, free warp) and an untiring suit. */
+  setExplorer(on: boolean): void {
+    this.vitals.explorer = on;
+    const s = this.pilot.ship;
+    s.unlimited = on;
+    if (on) {
+      Object.assign(s, { hull: 100, fuel: 100, powerOnline: true, thrustersOnline: true, warpCore: true });
+      this.toast('Modo Explorador ligado: nave livre, sem consumo de recursos', 'var(--cyan)');
+    } else this.toast('Modo Explorador desligado', 'var(--amber)');
+    void this.saveGame(true);
   }
 
   quitToMenu(): void {

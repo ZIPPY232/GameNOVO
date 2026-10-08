@@ -117,6 +117,12 @@ scanner, diário de descobertas, renomeação de corpos, personalização do tra
 música procedurais adaptativos, salvamento versionado e configurações gráficas com presets
 (Baixo, Médio, Alto, Ultra, Cinematográfico) e controles individuais.
 
+### Modo Explorador (fácil)
+
+Escolha **Explorador** em *Novo Jogo* (ou ligue/desligue a qualquer momento no menu de pausa):
+a nave começa intacta e abastecida, nunca gasta combustível nem sofre danos, o salto
+interestelar dispensa Núcleo e Células de Dobra, e o traje não consome oxigênio nem energia.
+
 ### Testes
 
 Os fluxos principais são verificados com scripts Playwright (Chromium/SwiftShader):

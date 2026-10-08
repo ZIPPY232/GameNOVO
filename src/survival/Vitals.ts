@@ -58,6 +58,8 @@ export class Vitals {
   regulating = true;
   warnings: string[] = [];
   dead = false;
+  /** Modo Explorador: no consumption, no damage */
+  explorer = false;
   onDamage: ((amount: number, cause: DamageCause) => void) | null = null;
 
   get oxygenMax(): number { return this.upgrades.o2Tank ? 200 : 100; }
@@ -65,7 +67,7 @@ export class Vitals {
   get tempRange(): [number, number] { return this.upgrades.thermal ? [-170, 220] : [-75, 95]; }
 
   damage(amount: number, cause: DamageCause): void {
-    if (this.dead || amount <= 0) return;
+    if (this.dead || amount <= 0 || this.explorer) return;
     this.health -= amount;
     this.lastDamage = 0;
     this.lastCause = cause;
@@ -87,6 +89,18 @@ export class Vitals {
     const dt = act.dt;
     this.lastDamage += dt;
     this.warnings.length = 0;
+    if (this.explorer) {
+      // explorer mode: the suit never runs dry and the body never suffers
+      this.oxygen = this.oxygenMax;
+      this.energy = this.energyMax;
+      this.health = Math.min(100, this.health + 10 * dt);
+      this.bodyTemp = 37;
+      this.radiation = 0;
+      this.food = 100;
+      this.water = 100;
+      this.integrity = 100;
+      return;
+    }
 
     // ------------------------------------------------ oxygen
     let o2Rate = 0.42 * (act.sprinting ? 1.6 : 1) * (act.mining ? 1.15 : 1);
@@ -188,12 +202,13 @@ export class Vitals {
   serialize(): Record<string, unknown> {
     return {
       health: this.health, oxygen: this.oxygen, energy: this.energy, bodyTemp: this.bodyTemp, integrity: this.integrity,
-      radiation: this.radiation, food: this.food, water: this.water, fullSurvival: this.fullSurvival, upgrades: { ...this.upgrades },
+      radiation: this.radiation, food: this.food, water: this.water, fullSurvival: this.fullSurvival, explorer: this.explorer, upgrades: { ...this.upgrades },
     };
   }
 
   load(d: Record<string, unknown>): void {
     Object.assign(this, { ...d, upgrades: { ...this.upgrades, ...((d.upgrades as object) ?? {}) } });
+    this.explorer = !!d.explorer;
     this.dead = false;
   }
 }

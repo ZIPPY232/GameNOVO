@@ -321,7 +321,7 @@ export class Pilot {
     if (maxPen > 0 && (maxPen > feetPen + 0.1 || s.gearT < 0.9)) {
       // hull strike
       s.pos.addScaledVector(up, maxPen + 0.02);
-      if (speed > 4) {
+      if (speed > 4 && !s.unlimited) {
         const dmg = (speed - 4) * 2.4;
         s.hull = Math.max(0, s.hull - dmg);
         g.audio.landing();
@@ -337,7 +337,7 @@ export class Pilot {
     if (feetPen > 0) {
       s.pos.addScaledVector(up, feetPen);
       if (vDown > 0) {
-        if (vDown > 7) {
+        if (vDown > 7 && !s.unlimited) {
           const dmg = (vDown - 7) * 3;
           s.hull = Math.max(0, s.hull - dmg);
           g.toast(`Pouso duro! Casco -${Math.round(dmg)}%`, 'var(--amber)');
@@ -555,7 +555,7 @@ export class Pilot {
     return {
       speed: s.vel.length(), vspeed: this.env.up.lengthSq() > 0 ? s.vel.dot(this.env.up) : 0, altitude: this.altitude,
       altLabel: frame ? (this.altitude > atmTop && atmTop > 0 ? 'ACIMA DA ATMOSFERA' : 'SOBRE O TERRENO') : 'ATÉ A SUPERFÍCIE MAIS PRÓXIMA',
-      throttle: s.throttleVis, fuel: s.fuel, hull: s.hull, hullTemp: s.hullTemp, power: s.powerOnline, thrusters: s.thrustersOnline, engine: s.engineOn,
+      throttle: s.throttleVis, fuel: s.fuel, unlimited: s.unlimited, hull: s.hull, hullTemp: s.hullTemp, power: s.powerOnline, thrusters: s.thrustersOnline, engine: s.engineOn,
       assist: s.assist, gear: s.gearDown, mode,
       nearest: nearest ? `${g.displayName(nearest.body.id)} · ${TYPE_LABEL[nearest.body.def.type]}` : '',
       target: targetLabel, stick: { x: this.stick.x, y: this.stick.y },
