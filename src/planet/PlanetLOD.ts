@@ -79,6 +79,9 @@ export class PlanetLOD {
   private cellMeters: number;
   disposed = false;
   detail = 1;
+  /** radius (m) around the observer fully covered by voxel chunks; tiles inside are skipped */
+  coverRadius = 0;
+  private camDirCache = new THREE.Vector3();
   readyRoots = 0;
   pendingTiles = 0;
 
@@ -154,6 +157,7 @@ export class PlanetLOD {
     // horizon angle from camera (with margin for mountains)
     const hor = camR > R ? Math.acos(Math.min(1, R / camR)) + Math.acos(Math.min(1, R / (R + 600))) : Math.PI;
     const camDir = cam.clone().normalize();
+    this.camDirCache.copy(camDir);
     for (const r of this.roots) this.visit(r, cam, camDir, hor);
     return this.readyRoots === 6;
   }
@@ -165,8 +169,10 @@ export class PlanetLOD {
     // horizon cull (angular)
     const ang = Math.acos(Math.max(-1, Math.min(1, n.center.dot(camDir) / n.center.length())));
     const angR = (sizeM * 0.75) / this.params.radius;
-    const hidden = ang - angR > hor;
-    const wantSplit = !hidden && n.level < this.maxLevel && dist < sizeM * 1.5 * this.detail;
+    // fully under the streamed voxel terrain: nothing of this tile would survive the discard
+    const covered = this.coverRadius > 0 && (ang + angR * 1.42) * this.params.radius < this.coverRadius - 8;
+    const hidden = ang - angR > hor || covered;
+    const wantSplit = !hidden && n.level < this.maxLevel && dist < sizeM * 1.2 * this.detail;
     if (!n.mesh && !n.pending) this.request(n, n.level * 3 + dist / 2000 - 50);
     if (wantSplit) {
       if (!n.children) {

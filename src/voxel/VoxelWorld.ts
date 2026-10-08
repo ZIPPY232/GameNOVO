@@ -13,7 +13,7 @@ import { buildChunkGeometry } from '../render/TerrainMaterial';
  * (see `edits`). Coordinates here are planet-local (body frame).
  */
 
-export const enum ChunkState { Requested, Ready }
+export enum ChunkState { Requested, Ready }
 
 export interface ChunkRec {
   key: string;
@@ -32,6 +32,9 @@ export interface ChunkRec {
   modified: boolean;
   lastNeeded: number;
 }
+
+/** shared all-air chunk used for lookups into generated-empty chunks */
+const EMPTY_CHUNK = new Uint8Array(CHUNK_VOL);
 
 export function chunkKey(face: number, cx: number, cy: number, cz: number): string {
   return face + ',' + cx + ',' + cy + ',' + cz;
@@ -99,6 +102,7 @@ export class VoxelWorld {
       const key = chunkKey(face, cx, cy, cz);
       const rec = this.chunks.get(key);
       data = rec?.data ?? this.edits.get(key) ?? null;
+      if (!data && rec && rec.state === ChunkState.Ready && rec.empty) data = EMPTY_CHUNK;
       this.lc[0] = face; this.lc[1] = cx; this.lc[2] = cy; this.lc[3] = cz;
       this.lcData = data;
       this.lcFrame = this.frame;

@@ -138,12 +138,13 @@ export class Ship {
       const dragK = 0.0009 * env.density;
       accel.addScaledVector(this.vel, -dragK * speed);
       // atmospheric lift keeps winged flight stable
-      const heatGain = Math.max(0, speed - 230) ** 2 * env.density * 0.0009;
-      this.hullTemp += (heatGain - (this.hullTemp - 20) * 0.08) * dt;
+      // stagnation heating grows with dynamic pressure (rho * v^2)
+      const heatGain = Math.max(0, speed - 150) ** 2 * env.density * 0.022;
+      this.hullTemp += (heatGain - (this.hullTemp - 20) * 0.25) * dt;
     } else {
       this.hullTemp += (20 - this.hullTemp) * 0.05 * dt;
     }
-    this.heat = Math.min(1, Math.max(0, (this.hullTemp - 300) / 900));
+    this.heat = Math.min(1, Math.max(0, (this.hullTemp - 250) / 950));
     if (this.hullTemp > 1300) this.hull = Math.max(0, this.hull - (this.hullTemp - 1300) * 0.002 * dt);
 
     // ---------------------------------------------------------- cruise drive

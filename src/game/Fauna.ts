@@ -234,13 +234,18 @@ export class Fauna {
 
   private groundRadius(dir: THREE.Vector3, fromR: number): number {
     const phys = this.game.universe.focus!.physics!;
+    const w = phys.world;
     const gp = { face: 0, x: 0, y: 0, z: 0 };
     phys.toGrid(dir.clone().multiplyScalar(fromR), gp);
     const I = Math.floor(gp.x), J = Math.floor(gp.y);
-    const top = phys.world.getLoaded(gp.face, I, J, Math.floor(gp.z));
-    if (top === 255) return -1;
-    for (let k = Math.floor(gp.z); k > Math.floor(gp.z) - 70; k--) {
-      if (phys.solid(gp.face, I, J, k)) return phys.world.params.baseRadius + k + 1;
+    // start just above the natural surface (covers flora), scan down through loaded data
+    const natural = w.gen.surfaceTop(gp.face, I, J);
+    const start = Math.min(Math.floor(gp.z), natural + 14);
+    if (w.getLoaded(gp.face, I, J, natural) === 255) return -1;
+    for (let k = start; k > start - 60; k--) {
+      const b = w.getLoaded(gp.face, I, J, k);
+      if (b === 255) continue;
+      if (phys.solid(gp.face, I, J, k)) return w.params.baseRadius + k + 1;
     }
     return -1;
   }

@@ -529,6 +529,7 @@ export class Pilot {
     let mode = 'VOO';
     if (g.warpState) mode = g.warpState;
     else if (this.docked) mode = 'ACOPLADO';
+    else if (s.heat > 0.12) mode = 'ENTRADA ATMOSFÉRICA';
     else if (s.landed) mode = s.engineOn ? 'POUSADO · MOTORES ATIVOS' : 'POUSADO';
     else if (s.cruise) mode = 'MOTOR DE CRUZEIRO';
     else if (!frame) mode = 'ESPAÇO INTERPLANETÁRIO';

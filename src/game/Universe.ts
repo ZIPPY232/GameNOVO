@@ -410,6 +410,7 @@ export class Universe {
       const rootInv = f.root.matrixWorld.clone().invert();
       this.terrainUniforms.uRenderToPlanet.value.copy(rootInv);
       observerLocal = new THREE.Vector3(0, 0, 0).applyMatrix4(rootInv);
+      f.lod.coverRadius = f.voxels && this.frame === f.body ? this.lodUniforms.uDiscardR.value : 0;
       const lodReady = f.lod.update(observerLocal);
       db.setSurfaceVisible(!lodReady);
       f.lod.detail = this.settings.lodDetail;
