@@ -90,6 +90,11 @@ float ph = iw.x * 0.37 + iw.z * 0.29 + iw.y * 0.11;
 float sway = sin(uTime * 1.7 + ph) * 0.6 + sin(uTime * 3.1 + ph * 1.7) * 0.25;
 transformed.x += sway * hgt * hgt * 0.12 * uWind;
 transformed.z += cos(uTime * 1.3 + ph) * hgt * hgt * 0.06 * uWind;`);
+      // normals point up on both sides of the cards: undo the back-face flip
+      shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+#ifdef DOUBLE_SIDED
+normal *= faceDirection;
+#endif`);
     };
     mat.customProgramCacheKey = () => 'grass';
     this.mesh = new THREE.InstancedMesh(tuftGeometry(), mat, this.max);

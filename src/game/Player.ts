@@ -695,8 +695,17 @@ export class Player {
     // flashlight
     const fl = this.flashlight;
     if (this.flashlightOn && g.vitals.energy <= 0) this.flashlightOn = false;
-    fl.intensity = this.flashlightOn ? 260 : 0;
+    fl.intensity = this.flashlightOn ? 70 : 0;
     const lampPos = this.pos.clone().addScaledVector(U, 1.7).addScaledVector(F, 0.25);
+    // the lit patch drives eye adaptation: report its illuminance to the exposure cap
+    let local = 0;
+    if (this.flashlightOn) {
+      const phys = this.physics();
+      const hit = phys ? phys.raycast(lampPos, this.lookDir, 30) : null;
+      const d = Math.max(1.5, hit ? hit.dist : 30);
+      local = (fl.intensity / Math.pow(d, fl.decay)) * 0.5;
+    }
+    g.universe.localLight = local;
     fl.position.copy(lampPos);
     fl.target.position.copy(lampPos).addScaledVector(this.lookDir, 10);
     this.model.setLightsOn(this.flashlightOn || g.universe.sunElevation < 0);

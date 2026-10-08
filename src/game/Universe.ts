@@ -97,6 +97,8 @@ export class Universe {
   sunDir = new THREE.Vector3(0, 1, 0);
   sunIrradiance = new THREE.Vector3(6, 6, 6);
   sunAtObserver = new THREE.Vector3();
+  /** illuminance of nearby artificial light the eye adapts to (flashlight patch) */
+  localLight = 0;
   ambient = new THREE.Vector3();
   eclipse = 1;
   sunElevation = 1;
@@ -511,7 +513,7 @@ export class Universe {
     this.renderer.fx.ambient.copy(this.ambient);
     // cap auto-exposure by the light actually reaching the observer (sunlit space is not "dark")
     const lum = (v: THREE.Vector3) => v.x * 0.2126 + v.y * 0.7152 + v.z * 0.0722;
-    const eEff = lum(this.sunAtObserver) + lum(this.ambient) * 3;
+    const eEff = lum(this.sunAtObserver) + lum(this.ambient) * 3 + this.localLight;
     this.renderer.maxExposure = THREE.MathUtils.clamp(2.2 / (eEff + 0.02), 0.25, 28);
     if (f) {
       const up = observerLocal!.clone().normalize().applyQuaternion(f.root.quaternion);

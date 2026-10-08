@@ -675,6 +675,7 @@ export class Game {
       this.player.pos.copy(ship.localToFrame(ShipModel.EYE));
       this.player.vel.copy(ship.vel);
       this.player.visible = false;
+      u.localLight = 0;
       this.pilot.updateCamera(dt);
     } else {
       this.pilot.update(dt, false);
