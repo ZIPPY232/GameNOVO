@@ -27,6 +27,7 @@ import { gridToPos } from '../planet/cubesphere';
 import type { TextureSet } from '../render/textureGen';
 import { Fauna } from './Fauna';
 import type { UI } from '../ui/UI';
+import { GrassField } from '../render/Grass';
 
 export type Mode = 'boot' | 'menu' | 'onfoot' | 'ship' | 'warp' | 'dead';
 
@@ -84,6 +85,9 @@ export class Game {
   private heatBlocks = 0;
   private thunderQueue: number[] = [];
   textures: TextureSet | null = null;
+  readonly grass = new GrassField();
+  private grassT = 0;
+  private lastEclipse = 1;
   scans = 0;
   /** POIs revealed by the scanner / visited (ids include system+body) */
   knownPois = new Set<string>();
@@ -349,7 +353,7 @@ export class Game {
   }
 
   /** Find a calm, dry spot with the gas giant above the horizon at sunrise. */
-  private findSpawn(moon: BodyState): { dir: THREE.Vector3; time: number } {
+  findSpawn(moon: BodyState): { dir: THREE.Vector3; time: number } {
     const u = this.universe;
     const gen = new TerrainGenerator(moon.def.gen!);
     u.system.update(0);
@@ -368,23 +372,36 @@ export class Game {
       const h1 = gen.heightAt(d.x + e, d.y, d.z), h2 = gen.heightAt(d.x, d.y + e, d.z);
       const slope = (Math.abs(h1 - h) + Math.abs(h2 - h)) / (e * moon.radius);
       const elev = d.dot(giantDir);
-      const score = -slope * 30 - Math.abs(elev - 0.55) * 20 - Math.abs(Math.abs(d.y) - 0.25) * 5 + Math.min(h, 30) * 0.05;
+      // the sun rises in the east (planet spins about +Y); keep the giant in the western sky
+      const east = new THREE.Vector3(0, 1, 0).cross(d).normalize();
+      const giantT = giantDir.clone().projectOnPlane(d).normalize();
+      const westness = -giantT.dot(east);
+      const score = -slope * 30 - Math.abs(elev - 0.5) * 20 - Math.abs(Math.abs(d.y) - 0.25) * 5 + Math.min(h, 30) * 0.05 + westness * 12;
       if (score > bestScore) { bestScore = score; best = d; }
     }
     const dir = best ?? giantDir.clone();
-    // time of day: sun rising (elevation ~0.18 and increasing)
+    // time of day: sun rising (elevation ~0.2), and no eclipse by the giant for the first ~15 minutes
     const period = moon.def.rotation.period;
-    let bestT = 0, bestE = 1e9;
-    for (let t = 0; t < period; t += period / 400) {
-      u.system.update(t);
-      const sunLocal = u.system.posFromSystem(moon, new THREE.Vector3(), new THREE.Vector3()).normalize();
-      u.system.update(t + 30);
-      const sunLater = u.system.posFromSystem(moon, new THREE.Vector3(), new THREE.Vector3()).normalize();
-      const e0 = sunLocal.dot(dir), e1 = sunLater.dot(dir);
+    const sunAt = (t: number) => { u.system.update(t); return u.system.posFromSystem(moon, new THREE.Vector3(), new THREE.Vector3()).normalize(); };
+    const giantAt = (t: number) => { u.system.update(t); return u.system.posFromSystem(moon, giant.pos, new THREE.Vector3()); };
+    const eclipsed = (t: number) => {
+      const s = sunAt(t), gp = giantAt(t);
+      const ang = s.angleTo(gp.clone().normalize());
+      return ang < Math.asin(Math.min(1, giant.radius / gp.length())) + 0.05;
+    };
+    let bestT = 0, bestTimeScore = -1e9;
+    for (let t = 0; t < period * 6; t += period / 240) {
+      const e0 = sunAt(t).dot(dir), e1 = sunAt(t + 30).dot(dir);
       if (e1 <= e0) continue;
-      const err = Math.abs(e0 - 0.2);
-      if (err < bestE) { bestE = err; bestT = t; }
+      const err = Math.abs(e0 - 0.22);
+      if (err > 0.08) continue;
+      // how long until the giant first covers the sun (cap 20 min)
+      let clear = 0;
+      while (clear < 1200 && !eclipsed(t + clear)) clear += 40;
+      const score = clear / 120 - err * 40;
+      if (score > bestTimeScore) { bestTimeScore = score; bestT = t; }
     }
+    u.system.update(bestT);
     return { dir, time: bestT };
   }
 
@@ -662,6 +679,7 @@ export class Game {
     this.updateLamps(dt);
     this.fauna.update(dt);
     this.updatePois(dt);
+    this.updateGrass(dt);
 
     // ---------------------------------------------------- campaign
     this.campaign.update({
@@ -688,6 +706,13 @@ export class Game {
       tu.uScanRadius.value = this.player.scanT * 26;
       tu.uScanStrength.value = Math.max(0, 1 - this.player.scanT / 3.2) * 1.0 + (this.player.scanT < 3 ? 0.4 : 0);
     } else tu.uScanStrength.value = 0;
+    // eclipse events
+    if (u.eclipse < 0.4 && this.lastEclipse >= 0.4 && u.frame) {
+      const occluder = u.system.bodies.find((b) => b !== u.frame && b.def.type === 'gas_giant');
+      this.hud.centerMessage('Eclipse', `${occluder ? this.displayName(occluder.id) : 'Um corpo celeste'} encobre a estrela`, 4);
+      this.discover({ id: `eclipse:${u.frame.id}`, kind: 'note', title: `Eclipse em ${this.displayName(u.frame.id)}`, text: 'A luz estelar some por alguns minutos: a temperatura cai e painéis solares param de gerar energia.', time: Date.now(), systemId: u.def.id });
+    }
+    this.lastEclipse = u.eclipse;
     this.updateTargetBox(camPos);
     this.updateWeatherFx(camPos, dt);
     this.updateFx(dt);
@@ -1137,6 +1162,22 @@ export class Game {
     this.player.visible = true;
     this.hud.showFoot(true);
     this.toast('Sistemas de emergência restauraram os sinais vitais', 'var(--amber)');
+  }
+
+  private updateGrass(dt: number): void {
+    const f = this.universe.focus;
+    const phys = f?.physics;
+    const veg = this.settings.graphics.vegetation;
+    if (!f || !phys || f.body !== this.universe.frame || veg <= 0) { this.grass.mesh.visible = false; return; }
+    if (this.grass.mesh.parent !== f.root) { f.root.add(this.grass.mesh); this.grass.invalidate(); }
+    this.grass.mesh.visible = true;
+    this.grass.update(this.universe.time, f.weather.cur.wind);
+    this.grassT -= dt;
+    const pos = this.mode === 'ship' ? this.pilot.ship.pos : this.player.pos;
+    // periodic refresh picks up newly streamed chunks and player edits
+    const force = this.grassT <= 0;
+    if (force) this.grassT = 4;
+    this.grass.maybeRebuild(phys, pos, f.body.def.gen!.bioTint, veg, force);
   }
 
   // ------------------------------------------------------------------ points of interest

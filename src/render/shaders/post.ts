@@ -59,8 +59,9 @@ void main() {
   // centre-weighted log luminance
   vec3 c = texture(tSrc, vUv).rgb;
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  float w = 1.0 - smoothstep(0.2, 0.75, length(vUv - 0.5));
-  fragColor = vec4(log2(max(l, 1e-5)) * (0.4 + w), 0.4 + w, 0.0, 1.0);
+  // centre- and ground-weighted metering (the sky should not drive exposure alone)
+  float w = (0.4 + 1.0 - smoothstep(0.2, 0.75, length(vUv - 0.5))) * mix(1.5, 0.55, vUv.y);
+  fragColor = vec4(log2(max(l, 1e-5)) * w, w, 0.0, 1.0);
 }`;
 
 export const LUM_DOWN = /* glsl */ `

@@ -332,7 +332,7 @@ function shade(m: LayerMaterial, n: TileNoise2, u: number, v: number, o: Texel, 
     }
     case 'bark': {
       const fib = n.fbm(u * 0.25, v, 16, 3);
-      const vein = 1 - smooth(0.0, 0.05, Math.abs(n.fbm(u, v * 0.3, 4, 3)));
+      const vein = (1 - smooth(0.0, 0.025, Math.abs(n.fbm(u, v * 0.3, 4, 3)))) * smooth(0.2, 0.6, n.fbm(u, v, 3, 2) * 0.5 + 0.5);
       setMix(0);
       scale(0.8 + fib * 0.3);
       r = mix(r, Bc[0], vein * 0.8); g = mix(g, Bc[1], vein * 0.8); b = mix(b, Bc[2], vein * 0.8);
@@ -350,7 +350,8 @@ function shade(m: LayerMaterial, n: TileNoise2, u: number, v: number, o: Texel, 
     case 'leaves': {
       const [f1, f2] = n.worley(u, v, 6);
       const leaf = smooth(0.0, 0.12, f2 - f1);
-      const spot = 1 - smooth(0.02, 0.06, f1);
+      const [s1] = n.worley(u, v, 3, 57);
+      const spot = 1 - smooth(0.015, 0.04, s1);
       setMix(0);
       scale(0.55 + leaf * 0.55);
       h = leaf * 0.8;

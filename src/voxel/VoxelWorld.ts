@@ -92,12 +92,25 @@ export class VoxelWorld {
       face = canonicalCell(face, I, J, p.N, this.tmpC);
       I = this.tmpC[0]; J = this.tmpC[1];
     }
-    const key = chunkKey(face, I >> CHUNK_SHIFT, J >> CHUNK_SHIFT, K >> CHUNK_SHIFT);
-    const rec = this.chunks.get(key);
-    const data = rec?.data ?? this.edits.get(key) ?? null;
+    const cx = I >> CHUNK_SHIFT, cy = J >> CHUNK_SHIFT, cz = K >> CHUNK_SHIFT;
+    let data: Uint8Array | null;
+    if (cx === this.lc[1] && cy === this.lc[2] && cz === this.lc[3] && face === this.lc[0] && this.lcFrame === this.frame) data = this.lcData;
+    else {
+      const key = chunkKey(face, cx, cy, cz);
+      const rec = this.chunks.get(key);
+      data = rec?.data ?? this.edits.get(key) ?? null;
+      this.lc[0] = face; this.lc[1] = cx; this.lc[2] = cy; this.lc[3] = cz;
+      this.lcData = data;
+      this.lcFrame = this.frame;
+    }
     if (!data) return B.UNKNOWN;
     return data[(I & 31) + (J & 31) * CHUNK + (K & 31) * 1024];
   }
+
+  /** last-chunk lookup cache (invalidated every streaming frame and on edits) */
+  private lc = [-1, 0, 0, 0];
+  private lcData: Uint8Array | null = null;
+  private lcFrame = -1;
 
   /** Block at cell; falls back to deterministic generation (no flora) if not loaded. */
   getBlock(face: number, I: number, J: number, K: number): number {
@@ -131,6 +144,7 @@ export class VoxelWorld {
   // ------------------------------------------------------------------ edits
 
   setBlock(face: number, I: number, J: number, K: number, block: number): boolean {
+    this.lcFrame = -1;
     const p = this.params;
     if (K < 1 || K >= p.layers) return false;
     if (I < 0 || I >= p.N || J < 0 || J >= p.N) {

@@ -219,7 +219,7 @@ export class Renderer {
     this.matUp = mk(BLOOM_UP, { tSrc: { value: null }, tBase: { value: null }, uTexel: { value: new THREE.Vector2() }, uRadius: { value: 1 } });
     this.matLum = mk(LUM_FRAG, { tSrc: { value: null } });
     this.matLumDown = mk(LUM_DOWN, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } });
-    this.matAdapt = mk(ADAPT_FRAG, { tLum: { value: null }, tPrev: { value: null }, uDt: { value: 0.016 }, uKey: { value: 0.16 }, uMin: { value: 0.02 }, uMax: { value: 40 }, uInit: { value: 1 } });
+    this.matAdapt = mk(ADAPT_FRAG, { tLum: { value: null }, tPrev: { value: null }, uDt: { value: 0.016 }, uKey: { value: 0.19 }, uMin: { value: 0.02 }, uMax: { value: 40 }, uInit: { value: 1 } });
     this.matFinal = mk(FINAL_FRAG, {
       tHDR: { value: null }, tBloom: { value: null }, tExposure: { value: null }, uBloom: { value: 0.06 }, uExposureBias: { value: 1 }, uManualExposure: { value: 0 },
       uSaturation: { value: 1.05 }, uContrast: { value: 1.04 }, uLift: { value: new THREE.Vector3(0.008, 0.01, 0.018) }, uGain: { value: new THREE.Vector3(1.02, 1.0, 0.97) },

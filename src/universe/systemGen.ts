@@ -236,7 +236,9 @@ function generateStartSystem(summary: StarSummary): StarSystemDef {
   startMoon.rotation.period = startMoon.orbit.period;
   startMoon.rotation.phase = startMoon.orbit.phase;
   startMoon.rotation.tilt = 0.12;
-  startMoon.gen!.bioTint = [0.34, 0.6, 0.46];
+  startMoon.gen!.bioTint = [0.42, 0.58, 0.36];
+  startMoon.gen!.floraDensity = 0.32;
+  startMoon.gen!.outcrops = 1.6;
   bodies.push(startMoon);
   const iceMoon = makeBody(sys, rng.fork(301), 'p2-b', 'Velune', 'moon', giant, { type: 'frozen', radius: 1800, orbitRadius: giant.radius * 5.6, gravity: 3.1 }, 301);
   bodies.push(iceMoon);

@@ -36,7 +36,8 @@ export function makeLayerProps(): THREE.Vector4[] {
   const out: THREE.Vector4[] = [];
   for (let i = 0; i < LAYER_COUNT; i++) {
     const m = LAYERS[i];
-    const flags = (isRockLike(m.pattern) ? 1 : 0) | (ore.has(i) ? 2 : 0);
+    const rotatable = ['rock', 'basalt', 'soil', 'moss', 'sand', 'snow', 'ice', 'ore', 'crystal', 'carbon', 'lava', 'regolith', 'ash', 'mud', 'bedrock', 'leaves', 'coral', 'fungus'].includes(m.pattern);
+    const flags = (isRockLike(m.pattern) ? 1 : 0) | (ore.has(i) ? 2 : 0) | (rotatable ? 4 : 0);
     out.push(new THREE.Vector4(m.metalness, m.emissive, m.opacity, flags));
   }
   return out;
@@ -120,16 +121,35 @@ varying vec3 vData;
 varying vec4 vTangentV;
 varying vec3 vPlanetPos;
 varying vec3 vRenderPos;
-vec4 gAlb; vec4 gMat; vec4 gProps; float gWet;`)
+vec4 gAlb; vec4 gMat; vec4 gProps; float gWet; mat2 gRot;`)
       .replace('#include <map_fragment>', `
 float layerF = floor(vData.x + 0.5);
-vec2 dUx = dFdx(vBlockUv), dUy = dFdy(vBlockUv);
-vec3 tuv = vec3(fract(vBlockUv), layerF);
-gAlb = textureGrad(tAlbedo, tuv, dUx, dUy);
-gMat = textureGrad(tMaterial, tuv, dUx, dUy);
 gProps = uLayerProps[int(layerF)];
 int lflags = int(gProps.w + 0.5);
+// per-block identity from global grid coordinates
+vec2 cell = floor(vBlockUv);
+uvec2 uc = uvec2(ivec2(cell) + 32768);
+uint hh = uc.x * 1664525u ^ (uc.y * 22695477u + uint(layerF) * 2654435761u);
+hh ^= hh >> 15; hh *= 2246822519u; hh ^= hh >> 13;
+float h1 = float(hh & 1023u) / 1023.0;
+float h2 = float((hh >> 10) & 1023u) / 1023.0;
+vec2 fuv = fract(vBlockUv);
+vec2 dUx = dFdx(vBlockUv), dUy = dFdy(vBlockUv);
+mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
+if ((lflags & 4) != 0) {
+  int r = int(hh >> 20) & 3;
+  rot = r == 0 ? mat2(1.0, 0.0, 0.0, 1.0) : r == 1 ? mat2(0.0, 1.0, -1.0, 0.0) : r == 2 ? mat2(-1.0, 0.0, 0.0, -1.0) : mat2(0.0, -1.0, 1.0, 0.0);
+  fuv = rot * (fuv - 0.5) + 0.5;
+  dUx = rot * dUx; dUy = rot * dUy;
+}
+gRot = rot;
+vec3 tuv = vec3(fuv, layerF);
+gAlb = textureGrad(tAlbedo, tuv, dUx, dUy);
+gMat = textureGrad(tMaterial, tuv, dUx, dUy);
 vec3 alb = gAlb.rgb;
+// subtle per-block tone variation so repeated blocks never look stamped
+alb *= 0.9 + 0.2 * h1;
+alb = mix(alb, alb * vec3(1.04, 0.98, 0.94), (h2 - 0.5) * 0.5);
 alb = mix(alb, alb * uBioTint * 1.6, gAlb.a);
 if ((lflags & 1) != 0) alb *= uRockTint;
 // macro variation in planet space
@@ -148,6 +168,7 @@ diffuseColor.a = gProps.z;
       .replace('#include <normal_fragment_maps>', `
 {
   vec3 mapN = vec3(gMat.rg * 2.0 - 1.0, 0.0);
+  mapN.xy = transpose(gRot) * mapN.xy;
   mapN.xy *= 1.0 - gWet * 0.6;
   mapN.z = sqrt(max(0.0, 1.0 - dot(mapN.xy, mapN.xy)));
   vec3 Nn = normal;
@@ -182,7 +203,7 @@ if (uScanStrength > 0.0) {
 }
 
 /** Builds a BufferGeometry from mesher output. */
-export function buildChunkGeometry(m: { position: Float32Array; normal: Int8Array; tangent: Int8Array; uv: Uint8Array; data: Uint8Array; index: Uint32Array | Uint16Array }): THREE.BufferGeometry {
+export function buildChunkGeometry(m: { position: Float32Array; normal: Int8Array; tangent: Int8Array; uv: Uint16Array; data: Uint8Array; index: Uint32Array | Uint16Array }): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(m.position, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(m.normal, 3, true));

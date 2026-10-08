@@ -14,7 +14,8 @@ import { CHUNK } from '../planet/terrain';
  *   position  Float32 x3  chunk-local metres
  *   normal    Int8   x3  normalised
  *   tangent   Int8   x4  normalised, w = bitangent sign
- *   uv        Uint8  x2  block units (texture repeats per block)
+ *   uv        Uint16 x2  global grid coordinates along the face axes (texture repeats per block,
+ *                        floor() identifies the block for per-block variation)
  *   data      Uint8  x4  [texture layer, ao 0..3, sky 0..15, unused]
  */
 
@@ -26,7 +27,7 @@ export interface MeshBuffers {
   position: Float32Array;
   normal: Int8Array;
   tangent: Int8Array;
-  uv: Uint8Array;
+  uv: Uint16Array;
   data: Uint8Array;
   index: Uint32Array | Uint16Array;
 }
@@ -38,20 +39,20 @@ export interface MeshResult {
 }
 
 class Builder {
-  pos: Float32Array; nrm: Int8Array; tan: Int8Array; uv: Uint8Array; dat: Uint8Array; idx: Uint32Array;
+  pos: Float32Array; nrm: Int8Array; tan: Int8Array; uv: Uint16Array; dat: Uint8Array; idx: Uint32Array;
   vc = 0; ic = 0;
   constructor(cap = 4096) {
     this.pos = new Float32Array(cap * 3);
     this.nrm = new Int8Array(cap * 3);
     this.tan = new Int8Array(cap * 4);
-    this.uv = new Uint8Array(cap * 2);
+    this.uv = new Uint16Array(cap * 2);
     this.dat = new Uint8Array(cap * 4);
     this.idx = new Uint32Array(cap * 1.5);
   }
   ensure(nv: number): void {
     if (this.vc + nv <= this.pos.length / 3) return;
     const cap = Math.max((this.pos.length / 3) * 2, this.vc + nv);
-    const grow = <T extends Float32Array | Int8Array | Uint8Array | Uint32Array>(a: T, n: number): T => {
+    const grow = <T extends Float32Array | Int8Array | Uint8Array | Uint16Array | Uint32Array>(a: T, n: number): T => {
       const b = new (a.constructor as { new (n: number): T })(n);
       b.set(a);
       return b;
@@ -234,8 +235,11 @@ export function meshChunk(inp: MeshInput): MeshResult {
 
             const base = bld.vc;
             const P = [p0, p1, p2, p3];
-            const U = [0, wdt, wdt, 0];
-            const V = [0, 0, hgt, hgt];
+            // global grid coordinates of the quad along its u/v axes
+            const G0 = [I0, J0, K0];
+            const gu = G0[ua] + u, gv = G0[va] + v;
+            const U = [gu, gu + wdt, gu + wdt, gu];
+            const V = [gv, gv, gv + hgt, gv + hgt];
             const AO = [ao0, ao1, ao2, ao3];
             for (let c = 0; c < 4; c++) {
               const vi = bld.vc++;

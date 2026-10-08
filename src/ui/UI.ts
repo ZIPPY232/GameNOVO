@@ -167,7 +167,7 @@ export class UI {
 
   // ------------------------------------------------------------------ modal helper
   private modal(title: string, body: HTMLElement, actions: { label: string; fn: () => void; primary?: boolean }[]): void {
-    this.closeModal();
+    this.menu.querySelectorAll('.modal-wrap').forEach((e) => e.remove());
     this.menu.classList.add('on');
     const wrap = h('div', 'modal-wrap');
     const m = h('div', 'modal pnl');
