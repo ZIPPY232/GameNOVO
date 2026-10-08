@@ -114,4 +114,4 @@ simulação custa ~1 ms; a cena típica na superfície fica em ~1 M triângulos 
 
 - Mais variedade de biomas, estruturas e espécies; árvore tecnológica mais longa.
 - Otimizações de GPU para os presets altos (oclusão de chunks, instancing de flora).
-- Anéis e luas com superfícies pousáveis em sistemas gerados; mais tipos de estação.
+- Mais tipos de estação e eventos espaciais; interiores de nave navegáveis a pé.
